@@ -1,0 +1,90 @@
+[
+  {
+    "type": "speech",
+    "start_time": 2.88,
+    "end_time": 6.72,
+    "transcription": "My Maker told his tale,",
+    "speaker_id": "speaker_0",
+    "emotion": "neutral_2",
+    "age": "adult_30s",
+    "gender": "male",
+    "voice_timbre": "male_baritone, slightly_soft_neutral, dark_neutral, slightly_breathy, slight_nasal_touch, near_neutral_relaxed, slight_roughness, chest_mixed, moderately_heavy, mild_wear, perfectly_natural, stable",
+    "speaking_style": "Suitable for Work, natural speaking, fluent, conversational style, modal voice, neutral airflow, normal loudness, slightly dynamic, neutral articulation, natural speaking",
+    "language": "en",
+    "accent": "en",
+    "speaking_rate": "slow"
+  },
+  {
+    "type": "sound_event",
+    "start_time": 0.0,
+    "end_time": 29.5,
+    "description": "A continuous, low-pitched, ominous ambient drone provides a tense and dramatic underscore throughout the entire duration. It has a deep, smooth texture with a subtle, slow evolution in its harmonic content. Layered on top of this drone are several distinct speech events from a male speaker, a powerful whooshing sound effect, and a quieter, melancholic piano music section that appears in the middle.",
+    "loudness": "quiet"
+  },
+  {
+    "type": "speech",
+    "start_time": 10.64,
+    "end_time": 11.6,
+    "transcription": "and I",
+    "speaker_id": "speaker_0",
+    "emotion": "neutral_2",
+    "age": "adult_30s",
+    "gender": "male",
+    "voice_timbre": "male_baritone, slightly_soft_neutral, near_neutral_slightly_bright, slightly_breathy, slight_nasal_touch, neutral_slightly_tense, slight_roughness, chest_mixed, near_neutral_heavy, mild_wear, mostly_natural, stable",
+    "speaking_style": "Suitable for Work, natural speaking, fluent, conversational style, modal voice, neutral airflow, normal loudness, slightly dynamic, neutral articulation, natural speaking",
+    "language": "en",
+    "accent": "en",
+    "speaking_rate": "normal"
+  },
+  {
+    "type": "speech",
+    "start_time": 14.16,
+    "end_time": 15.52,
+    "transcription": "will tell you mine",
+    "speaker_id": "speaker_0",
+    "emotion": "neutral_2",
+    "age": "adult_30s",
+    "gender": "male",
+    "voice_timbre": "male_baritone, slightly_soft_neutral, dark_neutral, slightly_breathy, slight_nasal_touch, near_neutral_relaxed, slight_roughness, chest_mixed, near_neutral_heavy, mild_wear, perfectly_natural, stable",
+    "speaking_style": "Suitable for Work, natural speaking, fluent, conversational style, modal voice, neutral airflow, normal loudness, slightly dynamic, neutral articulation, natural speaking",
+    "language": "en",
+    "accent": "en",
+    "speaking_rate": "slow"
+  },
+  {
+    "type": "speech",
+    "start_time": 27.76,
+    "end_time": 28.72,
+    "transcription": "I remember",
+    "speaker_id": "speaker_0",
+    "emotion": "neutral_2",
+    "age": "adult_30s",
+    "gender": "male",
+    "voice_timbre": "male_baritone, slightly_soft_neutral, dark_neutral, slightly_breathy, slight_nasal_touch, near_neutral_relaxed, slight_roughness, chest_mixed, moderately_heavy, mild_wear, perfectly_natural, stable",
+    "speaking_style": "Suitable for Work, natural speaking, fluent, conversational style, modal voice, neutral airflow, normal loudness, slightly dynamic, neutral articulation, natural speaking",
+    "language": "en",
+    "accent": "en",
+    "speaking_rate": "slow"
+  },
+  {
+    "type": "sound_event",
+    "start_time": 2.5,
+    "end_time": 12.0,
+    "description": "An adult male with a deep, resonant voice speaks in a slow, menacing, and deliberate tone. His delivery is clear and recorded with close proximity in a dry acoustic space. Concurrently, a quiet, continuous, low-pitched ambient drone underpins the scene, along with a shimmering, high-frequency sound that pans from left to right. Midway through the segment, a loud, complex whoosh sound effect erupts, featuring a powerful low-frequency rumble combined with a sharp, tearing texture, followed by a heavy, impactful thud.",
+    "loudness": "moderate"
+  },
+  {
+    "type": "sound_event",
+    "start_time": 12.0,
+    "end_time": 26.0,
+    "description": "A series of powerful, rhythmic whooshing sound effects creates a tense and impactful sonic landscape. Each whoosh has a sharp, aggressive onset and a quick decay, accompanied by a deep, resonant boom. Layered within these effects is a male voice speaking in a quiet, breathy, and intimate tone. In the background, a continuous, low-pitched ambient drone remains audible. Toward the end of this segment, the whooshes cease, and a solo piano begins a gentle, melodic piece.",
+    "loudness": "moderate"
+  },
+  {
+    "type": "sound_event",
+    "start_time": 23.5,
+    "end_time": 29.5,
+    "description": "A solo piano plays a gentle, sparse, and melancholic melody at a slow tempo. The performance has a delicate and thoughtful character. A quiet, continuous, low-pitched ambient drone is present in the background, and towards the end of the segment, an adult male with a deep, resonant voice speaks a brief phrase in a clear, declarative tone.",
+    "loudness": "quiet"
+  }
+]

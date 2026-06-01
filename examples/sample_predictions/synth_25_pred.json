@@ -1,0 +1,47 @@
+[
+  {
+    "type": "speech",
+    "start_time": 0.0,
+    "end_time": 10.68,
+    "transcription": "Ich kann es einfach nicht glauben, dass du mich schon wieder angelogen hast, nach allem, was wir zusammen durchgemacht haben. Das ist eine absolute Frechheit und ich werde dir das niemals verzeihen.",
+    "speaker_id": "speaker_0",
+    "emotion": "anger_2",
+    "age": "adult_30s",
+    "gender": "male",
+    "voice_timbre": "deep, resonant, clear",
+    "speaking_style": "serious, accusatory, steady pace",
+    "language": "de",
+    "accent": "standard_german",
+    "speaking_rate": "normal"
+  },
+  {
+    "type": "speech",
+    "start_time": 10.68,
+    "end_time": 20.34,
+    "transcription": "Die Schritte hinter mir werden immer lauter und schneller. Mein Herz rast vor Angst. Ich wage es kaum zu atmen und w\u00fcnsche mir verzweifelt, dass dieser Albtraum endlich aufh\u00f6rt.",
+    "speaker_id": "speaker_1",
+    "emotion": "fear_2",
+    "age": "young_adult_20s",
+    "gender": "female",
+    "voice_timbre": "high-pitched, trembling, breathy",
+    "speaking_style": "anxious, desperate, uneven pace",
+    "language": "de",
+    "accent": "standard_german",
+    "speaking_rate": "normal"
+  },
+  {
+    "type": "speech",
+    "start_time": 20.34,
+    "end_time": 29.82,
+    "transcription": "Ich habe gerade erfahren, dass ich die Stelle bekommen habe, von der ich immer getr\u00e4umt habe, und ich k\u00f6nnte vor Freude die ganze Welt umarmen. Das ist der sch\u00f6nste Tag meines Lebens.",
+    "speaker_id": "speaker_2",
+    "emotion": "joy_2",
+    "age": "young_adult_20s",
+    "gender": "female",
+    "voice_timbre": "bright, clear, enthusiastic",
+    "speaking_style": "excited, positive, fluid pace",
+    "language": "de",
+    "accent": "standard_german",
+    "speaking_rate": "normal"
+  }
+]

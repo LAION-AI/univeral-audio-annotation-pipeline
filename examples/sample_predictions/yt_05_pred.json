@@ -1,0 +1,46 @@
+[
+  {
+    "type": "speech",
+    "start_time": 0.0,
+    "end_time": 15.84,
+    "transcription": "Ever wondered how you can protect yourself from nuclear fallout without needing a billionaire's bank account or an underground mansion straight out of a sci-fi movie? Well, grab your shovel because we're about to dig into building your very own DIY bunker on a budget.",
+    "speaker_id": "speaker_0",
+    "emotion": "neutral_3",
+    "age": "adult_30s",
+    "gender": "male",
+    "voice_timbre": "male_baritone, moderately_bright_clear, slightly_breathy, slight_nasal_touch",
+    "speaking_style": "informative, engaging, conversational",
+    "language": "en",
+    "accent": "American",
+    "speaking_rate": "normal"
+  },
+  {
+    "type": "sound_event",
+    "start_time": 8.8,
+    "end_time": 15.8,
+    "description": "Dramatic orchestral sting with brass fanfares and string ostinatos",
+    "loudness": "moderate"
+  },
+  {
+    "type": "sound_event",
+    "start_time": 15.8,
+    "end_time": 22.8,
+    "description": "Upbeat, playful instrumental music with walking bass and strummed guitar",
+    "loudness": "moderate"
+  },
+  {
+    "type": "speech",
+    "start_time": 22.64,
+    "end_time": 29.76,
+    "transcription": "Let's face it, most of us don't have millions to spend on a fancy underground hideaway like some celebrities or",
+    "speaker_id": "speaker_0",
+    "emotion": "neutral_2",
+    "age": "adult_30s",
+    "gender": "male",
+    "voice_timbre": "male_baritone, slightly_breathy, slight_nasal_touch",
+    "speaking_style": "narrative, conversational",
+    "language": "en",
+    "accent": "American",
+    "speaking_rate": "normal"
+  }
+]

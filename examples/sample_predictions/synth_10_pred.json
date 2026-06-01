@@ -1,0 +1,47 @@
+[
+  {
+    "type": "speech",
+    "start_time": 0.0,
+    "end_time": 10.63,
+    "transcription": "Ich kann es einfach nicht glauben, dass du mich schon wieder angelogen hast, nach allem, was wir zusammen durchgemacht haben. Das ist eine absolute Frechheit und ich werde dir das niemals verzeihen.",
+    "speaker_id": "speaker_0",
+    "emotion": "anger_3",
+    "age": "adult_30s",
+    "gender": "female",
+    "voice_timbre": "mezzo-soprano, clear, slightly sharp",
+    "speaking_style": "confrontational, accusatory, raised voice",
+    "language": "de",
+    "accent": "standard_german",
+    "speaking_rate": "normal"
+  },
+  {
+    "type": "speech",
+    "start_time": 10.71,
+    "end_time": 20.27,
+    "transcription": "Ich habe gerade erfahren, dass ich die Stelle bekommen habe, von der ich immer getr\u00e4umt habe, und ich k\u00f6nnte vor Freude die ganze Welt umarmen. Das ist der sch\u00f6nste Tag meines Lebens.",
+    "speaker_id": "speaker_1",
+    "emotion": "joy_2",
+    "age": "adult_30s",
+    "gender": "male",
+    "voice_timbre": "tenor, bright, resonant",
+    "speaking_style": "enthusiastic, grateful, expressive",
+    "language": "de",
+    "accent": "standard_german",
+    "speaking_rate": "normal"
+  },
+  {
+    "type": "speech",
+    "start_time": 20.45,
+    "end_time": 29.36,
+    "transcription": "Ich kann es einfach nicht glauben, dass du mich schon wieder angelogen hast, nach allem, was wir zusammen durchgemacht haben. Das ist eine absolute Frechheit und ich werde dir das niemals verzeihen.",
+    "speaker_id": "speaker_0",
+    "emotion": "anger_3",
+    "age": "adult_30s",
+    "gender": "female",
+    "voice_timbre": "mezzo-soprano, clear, slightly sharp",
+    "speaking_style": "confrontational, accusatory, raised voice",
+    "language": "de",
+    "accent": "standard_german",
+    "speaking_rate": "normal"
+  }
+]

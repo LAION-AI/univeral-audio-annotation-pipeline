@@ -1,0 +1,17 @@
+[
+  {
+    "type": "speech",
+    "start_time": 0.0,
+    "end_time": 19.76,
+    "transcription": "Ich kann es einfach nicht glauben, dass du mich schon wieder angelogen hast, nach allem, was wir zusammen durchgemacht haben. Das ist eine absolute Frechheit und ich werde dir das niemals verzeihen. Ich kann es einfach nicht glauben, dass du mich schon wieder angelogen hast, nach allem, was wir zusammen durchgemacht haben. Das ist eine absolute Frechheit und ich werde dir das niemals verzeihen.",
+    "speaker_id": "speaker_0",
+    "emotion": "anger_2",
+    "age": "adult_30s",
+    "gender": "male",
+    "voice_timbre": "male_tenor, slightly_harsh, moderately_bright, mild_breathy, slight_nasal_touch, slightly_tense, slight_roughness, balanced_head_chest, light_neutral, mild_wear, mostly_natural, slight_wobble",
+    "speaking_style": "ranting style, tense voice, pressed voice, loud, dynamic, precise articulation",
+    "language": "de",
+    "accent": "standard_german",
+    "speaking_rate": "normal"
+  }
+]
