@@ -4,60 +4,63 @@ Produces structured JSON annotations from any audio file, covering speech transc
 
 **Best configuration: Triple ASR greedy** (combined equal-weight score: **4.13/5.00**)
 
+> ### ⭐ Recommended: the default pipeline
+> A turnkey, end-to-end implementation of this best configuration lives in
+> **[`default_pipeline/`](default_pipeline/)** — the **default, suggested configuration**.
+> It runs the full triple-ASR ensemble (VibeVoice + Parakeet + Qwen3, greedy) with the
+> Whisper experts, the SFX LoRA sound-event detector and MOSS-Audio-8B-Thinking, adds
+> **expressive emotion & speaking-style captions**, strict diarization-only speaker
+> identity, and explicit **singing** detection, and produces per-clip JSON plus a
+> self-contained HTML report. See **[docs/default_pipeline.md](docs/default_pipeline.md)**
+> for model weights, setup and run instructions.
+>
+> ```bash
+> cd default_pipeline && bash setup_environments.sh ./envs
+> export UAAP_MOSS_SRC="$(pwd)/envs/MOSS-Audio"
+> bash run_all.sh --audio /path/to/clips --workdir ./uaap_work --envs ./envs
+> ```
+
 ## Pipeline Architecture
 
+The **default ensemble** fuses three ASR systems, the Whisper voice experts, and two
+specialist sound-event pre-passes into a single MOSS-Audio reasoning stage:
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    INPUT: Audio File (WAV)                   │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-         ┌─────────────────┼─────────────────┐
-         ▼                 ▼                 ▼
-   ┌──────────┐     ┌──────────┐     ┌──────────┐
-   │VibeVoice │     │Parakeet  │     │ Qwen3    │
-   │  ASR     │     │TDT v3 + │     │ASR 1.7B +│
-   │          │     │Sortformer│     │Aligner   │
-   └────┬─────┘     └────┬─────┘     └────┬─────┘
-        │                │                │
-        │         ┌──────┴──────┐         │
-        │         │  Diarized   │         │
-        │         │ Transcripts │         │
-        │         └──────┬──────┘         │
-        │                │                │
-        │    ┌───────────┼───────────┐    │
-        │    ▼           ▼           ▼    │
-        │ ┌────────┐ ┌────────┐ ┌────────┐│
-        │ │Emotion │ │Timbre  │ │Style   ││
-        │ │Whisper │ │Whisper │ │Whisper ││
-        │ └───┬────┘ └───┬────┘ └───┬────┘│
-        │     └───────────┼─────────┘     │
-        │                 │               │
-        │    ┌────────────┴────────┐      │
-        │    │ Voice Analysis Per  │      │
-        │    │ Utterance           │      │
-        │    └────────────┬────────┘      │
-        │                 │               │
-        │         ┌───────┴────────┐      │
-        │         │ SFX LoRA       │      │
-        │         │ (MOSS-8B-Inst +│      │
-        │         │  LoRA r=128)   │      │
-        │         └───────┬────────┘      │
-        │                 │               │
-        └────────┬────────┼───────┬───────┘
-                 │        │       │
-                 ▼        ▼       ▼
-        ┌────────────────────────────────┐
-        │   MOSS-Audio-8B-Thinking       │
-        │   (Triple ASR reconciliation   │
-        │    + structured annotation)    │
-        └───────────────┬────────────────┘
-                        │
-                        ▼
-        ┌────────────────────────────────┐
-        │   OUTPUT: Structured JSON      │
-        │   [speech, vocal_burst,        │
-        │    sound_event segments]        │
-        └────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│                    INPUT: Audio File (any length)                      │
+└───────────────────────────────────┬───────────────────────────────────┘
+                                     │
+        ┌──────────────┬─────────────┴──────────────┐
+        ▼              ▼                             ▼
+  ┌──────────┐   ┌──────────┐                 ┌──────────┐
+  │VibeVoice │   │Parakeet  │                 │ Qwen3    │
+  │  ASR     │   │TDT v3 +  │                 │ASR 1.7B +│
+  │(diarize) │   │Sortformer│                 │ Aligner  │
+  └────┬─────┘   └────┬─────┘                 └────┬─────┘
+       │              │  Diarized transcripts      │
+       └──────┬───────┴───────────────┬────────────┘
+              ▼                        ▼
+  ┌──────────────────────┐  ┌──────────────────────────────┐
+  │ Whisper experts (x3) │  │ Specialist sound-event prepass│
+  │ emotion · timbre ·   │  │ • SFX LoRA (MOSS-8B-Instruct  │
+  │ speaking-style        │  │   + laion sfx-lora r=128)     │
+  │ (per utterance)      │  │ • Vocal-burst locator @0.7    │
+  └──────────┬───────────┘  │   + sound-effect captioner    │
+             │              └───────────────┬──────────────┘
+             └───────────────┬──────────────┘
+                             ▼
+        ┌──────────────────────────────────────────────┐
+        │            MOSS-Audio-8B-Thinking             │
+        │  triple-ASR vote · diarization-only speakers  │
+        │  expressive emotion & speaking-style captions │
+        │  singing flag · full-timeline coverage hint   │
+        └───────────────────────┬──────────────────────┘
+                                │  + deterministic gap-fill
+                                ▼     (non-speech background only)
+        ┌──────────────────────────────────────────────┐
+        │   OUTPUT: Structured JSON (covers full clip)  │
+        │   [speech · vocal_burst · sound_event]        │
+        └──────────────────────────────────────────────┘
 ```
 
 ## Output Format
@@ -140,9 +143,15 @@ python -m pipeline.run_pipeline \
 
 | Config | ASR Systems | Decoding | Combined Score |
 |--------|-------------|----------|----------------|
-| `triple_greedy` | VibeVoice + Parakeet + Qwen3 | Greedy | **4.13** |
+| `triple_greedy` ⭐ **default ensemble** | VibeVoice + Parakeet + Qwen3 | Greedy | **4.13** |
 | `ensemble_greedy` | Parakeet + Qwen3 | Greedy | 3.91 |
 | `vibevoice` | VibeVoice only | Greedy | 3.80 |
+
+⭐ **`triple_greedy` is the default ensemble.** The turnkey
+[`default_pipeline/`](default_pipeline/) runs it with the SFX LoRA sound-event detector,
+the vocal-burst locator (threshold 0.7) + sound-effect captioner, expressive emotion &
+speaking-style captions, diarization-only speaker identity, singing detection, and
+guaranteed full-timeline coverage. See [docs/default_pipeline.md](docs/default_pipeline.md).
 
 ## Model Requirements
 
@@ -153,12 +162,16 @@ python -m pipeline.run_pipeline \
 | Sortformer | `nvidia/diar_sortformer_4spk-v1` | ~2 GB |
 | Qwen3-ASR | `Qwen/Qwen3-ASR-1.7B` + `Qwen/Qwen3-ForcedAligner-0.6B` | ~8 GB |
 | Whisper experts (x3) | `laion/BUD-E-Whisper`, `laion/timbre-whisper`, `laion/voice-tagging-whisper` | ~2 GB total |
-| SFX LoRA | `OpenMOSS-Team/MOSS-Audio-8B-Instruct` + `LAION-AI/moss-audio-sfx-lora-v4` | ~18 GB |
+| SFX LoRA | `OpenMOSS-Team/MOSS-Audio-8B-Instruct` + `laion/moss-audio-sfx-lora-v4` (gated) | ~18 GB |
+| Vocal-burst locator | `laion/vocalburst-locator` (threshold 0.7) | ~1 GB |
+| Sound-effect captioner | `laion/sound-effect-captioning-whisper` | ~1 GB |
 | MOSS Annotator | `OpenMOSS-Team/MOSS-Audio-8B-Thinking` | ~18 GB |
 
-**Total for triple_greedy**: ~40-50 GB VRAM (models loaded/unloaded sequentially on a single GPU).
+**Total for triple_greedy**: ~40-50 GB VRAM (models loaded/unloaded sequentially; VibeVoice-ASR
+is sharded across two GPUs). With multi-GPU, components can run in parallel on separate GPUs.
 
-With multi-GPU, components can run in parallel on separate GPUs.
+> The SFX LoRA `laion/moss-audio-sfx-lora-v4` is gated — request access and `huggingface-cli login`,
+> or run with `--no-sfx`. Full model table with links: [docs/default_pipeline.md](docs/default_pipeline.md).
 
 ## Evaluation Results
 
@@ -182,15 +195,30 @@ Interactive evaluation grid: [GitHub Pages](https://laion-ai.github.io/univeral-
 ## Repository Structure
 
 ```
+default_pipeline/        # ⭐ Default recommended configuration (turnkey scripts)
+  setup_environments.sh  # Build the per-component virtual-envs
+  run_all.sh             # Run all stages end-to-end
+  prepare_audio.py       # Stage 0: decode + index
+  workers/               # One script per stage:
+    stage1a_vibevoice.py #   VibeVoice-ASR
+    stage1b_parakeet.py  #   Parakeet TDT v3 + Sortformer
+    stage1c_qwen3.py     #   Qwen3-ASR + ForcedAligner
+    stage2_whisper_experts.py  # emotion/timbre/style
+    stage3_sfx_lora.py   #   SFX LoRA sound events
+    stage3b_vocalburst.py#   Vocal-burst locator + captioner
+    stage4_moss_annotator.py   # MOSS final annotation (greedy)
+  build_report.py        # Self-contained HTML report
+
 pipeline/
-  run_pipeline.py        # Main entry point
+  run_pipeline.py        # Main entry point (single-process reference implementation)
   asr_vibevoice.py       # VibeVoice-ASR component
   asr_parakeet.py        # Parakeet TDT v3 + Sortformer
   asr_qwen3.py           # Qwen3-ASR-1.7B + ForcedAligner
   whisper_experts.py     # Emotion/timbre/style Whisper models
   sfx_lora.py            # LoRA SFX sound event detection
-  moss_annotator.py      # MOSS-Audio-8B-Thinking annotation
-  utils.py               # Shared utilities
+  vocalburst_locator.py  # Vocal-burst locator + sound-effect captioner
+  moss_annotator.py      # MOSS-Audio-8B-Thinking annotation (customized prompt)
+  utils.py               # Shared utilities (incl. full-timeline gap-fill)
 
 evaluation/
   eval_triple_asr.py     # Full evaluation script
@@ -198,6 +226,7 @@ evaluation/
   build_html_report.py   # HTML report generator
 
 docs/
+  default_pipeline.md    # ⭐ Default configuration: models, links, setup, run guide
   pipeline_details.md    # Per-component details
   evaluation_results.md  # Full evaluation results
   training_lora.md       # LoRA training details
@@ -210,8 +239,22 @@ examples/
 
 ## Links
 
-- **LoRA Weights**: [LAION-AI/moss-audio-sfx-lora-v4](https://huggingface.co/LAION-AI/moss-audio-sfx-lora-v4)
-- **MOSS-Audio**: [OpenMOSS-Team/MOSS-Audio-8B-Thinking](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-8B-Thinking)
+**ASR**
+- VibeVoice-ASR: [microsoft/VibeVoice-ASR](https://huggingface.co/microsoft/VibeVoice-ASR) · [code](https://github.com/microsoft/VibeVoice)
+- Parakeet TDT v3: [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) · Sortformer: [nvidia/diar_sortformer_4spk-v1](https://huggingface.co/nvidia/diar_sortformer_4spk-v1)
+- Qwen3-ASR: [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) · [Qwen/Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B)
+
+**Voice experts**
+- Emotion: [laion/BUD-E-Whisper](https://huggingface.co/laion/BUD-E-Whisper) · Timbre: [laion/timbre-whisper](https://huggingface.co/laion/timbre-whisper) · Style: [laion/voice-tagging-whisper](https://huggingface.co/laion/voice-tagging-whisper)
+
+**Sound events**
+- SFX LoRA: [laion/moss-audio-sfx-lora-v4](https://huggingface.co/laion/moss-audio-sfx-lora-v4) (gated) on [OpenMOSS-Team/MOSS-Audio-8B-Instruct](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-8B-Instruct)
+- Vocal-burst locator: [laion/vocalburst-locator](https://huggingface.co/laion/vocalburst-locator)
+- Sound-effect captioner: [laion/sound-effect-captioning-whisper](https://huggingface.co/laion/sound-effect-captioning-whisper)
+
+**Annotator & MOSS-Audio**
+- [OpenMOSS-Team/MOSS-Audio-8B-Thinking](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-8B-Thinking) · source code: [github.com/OpenMOSS/MOSS-Audio](https://github.com/OpenMOSS/MOSS-Audio)
+
 - **Evaluation Grid**: [GitHub Pages](https://laion-ai.github.io/univeral-audio-annotation-pipeline/eval_grid/)
 
 ## License

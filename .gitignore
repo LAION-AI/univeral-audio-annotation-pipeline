@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+envs/
+uaap_work/
+*.egg-info/
