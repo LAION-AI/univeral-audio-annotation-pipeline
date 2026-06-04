@@ -88,6 +88,9 @@ are determined SOLELY by the diarization built into the ASR sources. Follow this
    speaker diarization — trust its speaker labels. When VibeVoice is available, IGNORE the Sortformer
    speaker labels (used by Parakeet and Qwen3) for deciding HOW MANY speakers there are; use Parakeet/
    Qwen3 only to reconcile the words and their timing, not the speaker count.
+   **This trust applies ONLY to speaker count / diarization — NOT to the words.** For the actual
+   wording, VibeVoice carries no special weight; the Parakeet+Qwen3 majority decides the words (see
+   TRIPLE-ASR RECONCILIATION). Do not copy VibeVoice's wording just because you trust its diarization.
 2. **Only if there is NO VibeVoice transcript**, fall back to the Sortformer diarization speaker
    labels (shared by Parakeet and Qwen3).
 
@@ -135,11 +138,22 @@ to match the audio.
 
 You have THREE independent ASR transcriptions below. Two use Sortformer diarization (Parakeet, Qwen3-ASR), one uses its own built-in pipeline (VibeVoice-ASR).
 
-Reconciliation strategy — three ASR sources vote on the WORDS/CONTENT:
-- **Two or three agree → use the majority version** (high confidence).
-  - If **Parakeet and Qwen3 agree** and they outvote VibeVoice → use the Parakeet+Qwen3 version.
-  - If **Qwen3 and VibeVoice agree** (and Parakeet differs or is empty) → use the VibeVoice version.
-  - If **VibeVoice and Parakeet agree** → use that version.
+Reconciliation strategy — three ASR sources vote on the WORDS/CONTENT. **MAJORITY WORDING WINS:**
+- **When two or three ASR systems agree on the wording, you MUST use that majority wording — verbatim.**
+  Do not substitute a different transcription. In particular:
+  - **If Parakeet and Qwen3 agree on a word/phrase and VibeVoice differs, the Parakeet+Qwen3 wording
+    WINS and overrides VibeVoice.** Two votes beat one. Do NOT keep VibeVoice's wording in this case.
+    > Worked example — sources say:
+    > • VibeVoice: "My maker told his tale. Then I will turn you behind."
+    > • Parakeet:  "My maker told his tale, and I will tell you mine."
+    > • Qwen3:     "My maker told his tale and I will tell you mine."
+    > Parakeet and Qwen3 agree → output **"My maker told his tale, and I will tell you mine."**
+    > (NOT VibeVoice's "Then I will turn you behind").
+  - If **Qwen3 and VibeVoice agree** (Parakeet differs/empty) → use that wording.
+  - If **VibeVoice and Parakeet agree** → use that wording.
+- **VibeVoice does NOT get wording priority.** VibeVoice is authoritative ONLY for the SPEAKER COUNT and
+  diarization (see the SPEAKER IDENTITY RULE) — never for choosing words. When VibeVoice is the lone
+  dissenter on wording, discard its wording and follow the two-vote majority.
 - **Only one source has content the others missed → ASSUME IT IS REAL and INCLUDE it.**
   e.g. if only Qwen3 transcribes a line while VibeVoice and Parakeet caught nothing there, still
   transcribe that speech — do not drop it just because the other two missed it.
@@ -374,20 +388,13 @@ class MOSSAnnotator:
         """
         lines = []
 
-        # ASR Source 1: VibeVoice
-        if vibevoice_utts:
-            lines.append("### ASR Source 1: VibeVoice-ASR (end-to-end, built-in diarization)")
-            for seg in vibevoice_utts:
-                spk = f"Speaker {seg.get('speaker_id', '?')}"
-                st = seg.get("start_time", "?")
-                et = seg.get("end_time", "?")
-                content = seg.get("content", "")
-                lines.append(f'- {spk}: [{st}s - {et}s] "{content}"')
-            lines.append("")
+        # Sources are ordered so the two independent word-level ASRs (Parakeet, Qwen3)
+        # come FIRST as the primary wording reference; VibeVoice is last and is only a
+        # diarization reference for wording purposes (it must not win wording votes).
 
-        # ASR Source 2: Parakeet + Sortformer
+        # ASR Source 1: Parakeet + Sortformer (primary wording reference)
         if parakeet_utts:
-            lines.append("### ASR Source 2: Parakeet TDT v3 + Sortformer diarization")
+            lines.append("### ASR Source 1: Parakeet TDT v3 + Sortformer diarization (primary wording reference)")
             for seg in parakeet_utts:
                 spk = f"Speaker {seg.get('speaker_id', '?')}"
                 st = seg.get("start_time", "?")
@@ -396,10 +403,26 @@ class MOSSAnnotator:
                 lines.append(f'- {spk}: [{st}s - {et}s] "{content}"')
             lines.append("")
 
-        # ASR Source 3: Qwen3-ASR + Sortformer
+        # ASR Source 2: Qwen3-ASR + Sortformer (primary wording reference)
         if qwen3_utts:
-            lines.append("### ASR Source 3: Qwen3-ASR-1.7B + Sortformer diarization")
+            lines.append("### ASR Source 2: Qwen3-ASR-1.7B + Sortformer diarization (primary wording reference)")
             for seg in qwen3_utts:
+                spk = f"Speaker {seg.get('speaker_id', '?')}"
+                st = seg.get("start_time", "?")
+                et = seg.get("end_time", "?")
+                content = seg.get("content", "")
+                lines.append(f'- {spk}: [{st}s - {et}s] "{content}"')
+            lines.append("")
+        if parakeet_utts and qwen3_utts:
+            lines.append("> NOTE: Where Source 1 (Parakeet) and Source 2 (Qwen3) agree on the wording, "
+                         "that agreed wording is the MAJORITY and must be used verbatim, overriding any "
+                         "different wording in Source 3 (VibeVoice) below.")
+            lines.append("")
+
+        # ASR Source 3: VibeVoice (diarization reference only — NOT a wording authority)
+        if vibevoice_utts:
+            lines.append("### ASR Source 3: VibeVoice-ASR (end-to-end; speaker-diarization reference — do NOT prefer its wording)")
+            for seg in vibevoice_utts:
                 spk = f"Speaker {seg.get('speaker_id', '?')}"
                 st = seg.get("start_time", "?")
                 et = seg.get("end_time", "?")
