@@ -16,7 +16,7 @@ class SFXDetector:
     """Sound effect detector using MOSS-Audio-8B-Instruct + LoRA adapter.
 
     Base model: OpenMOSS-Team/MOSS-Audio-8B-Instruct
-    LoRA adapter: LAION-AI/moss-audio-sfx-lora-v4
+    LoRA adapter: laion/moss-audio-sfx-lora-v4
         - Rank 128, alpha 256
         - Trained on 10,998 LAION soundscapes (Gemini 2.5 Pro annotations)
         - Checkpoint: step 2750
@@ -44,7 +44,7 @@ class SFXDetector:
         Args:
             device: CUDA device string.
             lora_path: Local path to LoRA adapter directory. If None, downloads
-                from HuggingFace (LAION-AI/moss-audio-sfx-lora-v4).
+                from HuggingFace (laion/moss-audio-sfx-lora-v4).
             moss_audio_path: Path to MOSS-Audio source code. If None, uses
                 the installed package or trust_remote_code.
         """

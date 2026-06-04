@@ -16,7 +16,7 @@ The SFX LoRA adapter fine-tunes MOSS-Audio-8B-Instruct for sound event detection
 | **Epochs** | 2 (best at step 2750) |
 | **Eval loss** | 2.76 |
 | **Adapter size** | ~667 MB |
-| **HuggingFace repo** | `LAION-AI/moss-audio-sfx-lora-v4` |
+| **HuggingFace repo** | `laion/moss-audio-sfx-lora-v4` |
 
 ## Training Data
 
@@ -61,7 +61,7 @@ model = MossAudioModel.from_pretrained(
 )
 
 # Load and merge LoRA
-model = PeftModel.from_pretrained(model, "LAION-AI/moss-audio-sfx-lora-v4")
+model = PeftModel.from_pretrained(model, "laion/moss-audio-sfx-lora-v4")
 model = model.merge_and_unload()
 model.eval()
 ```
@@ -91,7 +91,7 @@ After testing all 4 combinations of segment_duration x overlapping:
 
 ## Checkpoints
 
-The `LAION-AI/moss-audio-sfx-lora-v4` repository contains:
+The `laion/moss-audio-sfx-lora-v4` repository contains:
 
 ```
 adapter_config.json          # LoRA configuration

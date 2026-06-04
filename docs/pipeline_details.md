@@ -111,7 +111,7 @@ whisper.cleanup()
 ## 3. SFX LoRA
 
 **Base Model**: `OpenMOSS-Team/MOSS-Audio-8B-Instruct` (~18 GB)
-**LoRA Adapter**: `LAION-AI/moss-audio-sfx-lora-v4`
+**LoRA Adapter**: `laion/moss-audio-sfx-lora-v4`
 **Input**: WAV audio file
 **Output**: Sound event predictions with timestamps and captions
 
