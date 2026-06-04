@@ -29,11 +29,11 @@ Return a JSON array of segment dictionaries. Each segment uses one of three sche
   "end_time": 5.87,
   "transcription": "I can't believe you actually did that",
   "speaker_id": "speaker_1",
-  "emotion": "anger_3",
+  "emotion": "clearly intense anger laced with a thread of wounded disappointment",
   "age": "adult_30s",
   "gender": "female",
   "voice_timbre": "alto, warm, slightly raspy",
-  "speaking_style": "confrontational, accusatory, raised voice",
+  "speaking_style": "confrontational accusatory bark, voice raised and clipped, almost ranting",
   "language": "en",
   "accent": "American Midwest",
   "speaking_rate": "fast"
@@ -49,7 +49,7 @@ Return a JSON array of segment dictionaries. Each segment uses one of three sche
   "transcription": null,
   "speaker_id": "speaker_1",
   "vocal_burst": "scoff",
-  "emotion": "contempt_2"
+  "emotion": "slight, barely-veiled contempt with a flicker of amusement"
 }
 ```
 
@@ -67,12 +67,12 @@ Return a JSON array of segment dictionaries. Each segment uses one of three sche
 ### Field details
 - start_time/end_time: Seconds from audio start, 2 decimal places.
 - speaker_id: Consistent label per unique voice (speaker_1, speaker_2, ...).
-- emotion: EmoNet taxonomy label with intensity suffix 1-4 (anger_3, joy_2, sadness_4, etc.).
+- emotion: A PRECISE EMOTION CAPTION (a few words up to ~10-12 words), NOT a single label and NOT a numeric intensity suffix. Describe the felt emotion using EmoNet voice-taxonomy emotion words (e.g. anger, contempt, disgust, fear, anxiety, sadness, disappointment, grief, joy, amusement, excitement, pride, relief, awe, tenderness, love, desire, embarrassment, guilt, shame, confusion, surprise, boredom, calmness, determination, etc.). Pin the intensity precisely with a modifier such as barely / slight / mild / moderate / clearly / strongly / intensely / extreme, and capture blends when two or more emotions co-occur (e.g. "clearly amused excitement edging into giddy joy", "barely contained anxiety under a calm surface", "intensely bitter disgust mixed with simmering anger"). Aim to nail the exact affect, not just name it.
 - age: baby, toddler, child, teenager, young_adult_20s, adult_30s, adult_40s, middle_aged_50s, senior_60s, elderly_70s_plus.
 - gender: male, female, nonbinary, unclear.
 - speaking_rate: very_slow, slow, normal, fast, very_fast.
 - voice_timbre: comma-separated descriptors.
-- speaking_style: Free description of delivery manner.
+- speaking_style: A VIVID DELIVERY CAPTION (a few words up to ~10-12 words) describing HOW it is spoken, not just the words. Capture the manner and register precisely, e.g. "low conspiratorial whisper, barely audible", "euphoric manic rant, words tumbling over each other", "slow, drowsy, slurring, barely staying awake", "booming drill-sergeant bark, clipped and commanding", "measured preacher-like cadence building to fervor", "flat deadpan mutter", "breathless pleading". Nail the specific speaking style rather than giving a generic description. SINGING: if what you hear is actually SUNG rather than spoken (melody, sustained pitches, rhythmic/musical phrasing), TRUST YOUR OWN LISTENING and say so explicitly here — even when the upstream voice-tagging / timbre experts report ordinary talking (those experts often mislabel singing as speech). Use clear wording such as "singing, melodic and sustained", "softly crooning a tune", "belting out a song", or "rhythmic, rap-like chanting". Most segments are plain speech, but whenever the delivery is sung or part-sung, flag it in this field.
 - language: ISO 639-1 code.
 - vocal_burst: Category label (chuckle, belly_laugh, gentle_sob, gasp, sigh, scoff, scream, etc.).
 - loudness (sound events only): quiet, moderate, loud, very_loud.
@@ -80,12 +80,28 @@ Return a JSON array of segment dictionaries. Each segment uses one of three sche
 
 SPEAKER_RULE = """## SPEAKER IDENTITY RULE (MANDATORY)
 
-The ASR pipelines are the DEFINITIVE ground truth for:
-- How many speakers exist in this audio
-- Which speaker says what and when
-- Speaker IDs (speaker_0, speaker_1, etc.)
+The number of distinct speakers, which speaker says what and when, and the speaker IDs
+are determined SOLELY by the diarization built into the ASR sources. Follow this strict priority:
 
-Do NOT create additional speakers beyond what the ASR systems identify."""
+1. **If a VibeVoice-ASR transcript is present, it is the DEFINITIVE ground truth for the speaker
+   count and for which speaker each utterance belongs to.** VibeVoice has the strongest built-in
+   speaker diarization — trust its speaker labels. When VibeVoice is available, IGNORE the Sortformer
+   speaker labels (used by Parakeet and Qwen3) for deciding HOW MANY speakers there are; use Parakeet/
+   Qwen3 only to reconcile the words and their timing, not the speaker count.
+2. **Only if there is NO VibeVoice transcript**, fall back to the Sortformer diarization speaker
+   labels (shared by Parakeet and Qwen3).
+
+Hard constraints:
+- Do NOT invent speakers beyond what the chosen diarization source (VibeVoice, else Sortformer) reports.
+- This rule limits the speaker COUNT, not whether speech exists: if an ASR transcribes a real line in a
+  region the diarizer left empty (e.g. VibeVoice labelled it music), still include that speech and attach
+  it to the most plausible existing speaker (default speaker_0) — never silently drop audible speech.
+- The per-segment voice analysis and the sound-event (SFX) predictions are NOT diarization. They are
+  descriptions of audio content and may mention "a second voice", "another speaker", "an older male
+  voice", etc. Such phrases are NEVER evidence of an additional speaker and must NOT increase the
+  speaker count. A sound event is never a speaker.
+- Every speech segment must use one of the speaker IDs established by the diarization above; never
+  create a new speaker_id from a sound-event caption or a voice description."""
 
 TRIPLE_ASR_PROMPT = r"""You are an expert audio annotation model. Annotate every audible event.
 
@@ -104,25 +120,64 @@ Your job:
 4. Add sounds the upstream missed (transitions, brief impacts, room tone shifts)
 5. Continuous backgrounds (drones, music) = single entries spanning full duration
 
+These sound-event captions describe audio content ONLY. If an SFX caption mentions a voice or
+"another speaker", do NOT treat it as a new speaker or emit it as a speech segment — speaker identity
+and count come exclusively from the diarization (see the SPEAKER IDENTITY RULE).
+
+A separate SPECIALIST DETECTOR also proposes short, timestamped sound effects (listed in the
+background information). Treat these as candidate sound events: verify each one against what you
+actually hear at that timestamp. Integrate a candidate as a sound_event ONLY if it is genuinely
+audible and real — these detections can be hallucinations or false positives, so silently ignore any
+that you cannot actually hear. When a candidate is real, refine its description, timing and loudness
+to match the audio.
+
 ## TRIPLE-ASR RECONCILIATION
 
 You have THREE independent ASR transcriptions below. Two use Sortformer diarization (Parakeet, Qwen3-ASR), one uses its own built-in pipeline (VibeVoice-ASR).
 
-Reconciliation strategy:
-- **Majority vote**: If 2 or 3 ASR systems agree on a word → HIGH CONFIDENCE, use it
-- **Single disagreement**: If one system differs from two others → trust the majority
-- **All three differ**: Listen carefully to the audio and pick the most plausible version
-- **Extra words**: If any ASR has words the others missed → likely real speech, INCLUDE it
-- **Timestamps**: Average or prefer the source most consistent with what you hear
-- **Speaker IDs**: Trust Sortformer diarization (used by Parakeet and Qwen3); cross-check with VibeVoice
+Reconciliation strategy — three ASR sources vote on the WORDS/CONTENT:
+- **Two or three agree → use the majority version** (high confidence).
+  - If **Parakeet and Qwen3 agree** and they outvote VibeVoice → use the Parakeet+Qwen3 version.
+  - If **Qwen3 and VibeVoice agree** (and Parakeet differs or is empty) → use the VibeVoice version.
+  - If **VibeVoice and Parakeet agree** → use that version.
+- **Only one source has content the others missed → ASSUME IT IS REAL and INCLUDE it.**
+  e.g. if only Qwen3 transcribes a line while VibeVoice and Parakeet caught nothing there, still
+  transcribe that speech — do not drop it just because the other two missed it.
+- **All three differ → listen carefully and pick the most plausible version.**
+- **Timestamps**: average or prefer the source most consistent with what you hear.
+- **Speaker count / IDs** are governed by the SPEAKER IDENTITY RULE above (VibeVoice's built-in
+  diarization when present, otherwise Sortformer). Word-level voting decides WHAT is said and WHETHER
+  speech exists there; it does NOT change the number of speakers. Speech that only one ASR caught is
+  still included and attributed to the most plausible existing speaker (default speaker_0).
 
 ## SPEECH ANNOTATION
 
 Use the reconciled transcripts. Fill speaker attributes from voice analysis + your listening.
 
-## COMPLETENESS
+SINGING vs SPEECH: the upstream Whisper voice-tagging/timbre experts tend to report "talking" even when
+a segment is actually being sung. Rely on your own audio judgment: if you hear melody, sustained pitches
+or musical rhythm, treat it as singing and state that explicitly in the segment's `speaking_style`
+(e.g. "singing, melodic and sustained"). Speech is the common case, but never hide singing.
 
-Every second of audio should be covered by at least one annotation (speech, sound event, or both). Gaps between speech always contain at least ambient sound or room tone.
+## COMPLETENESS (FULL-TIMELINE COVERAGE — MANDATORY)
+
+This clip is {duration} seconds long. Your annotation MUST cover the ENTIRE span from 0.00s to
+{duration}s with NO uncovered gaps: every instant of audio must fall inside at least one segment's
+[start_time, end_time].
+- Do not stop early. The last segment must reach (≈) {duration}s; never let the annotation end while
+  audio remains.
+- Fill every gap between speech/events: if a stretch is essentially silent, emit a sound_event
+  describing it (e.g. "near silence with faint room tone", loudness "quiet") covering that span.
+- If you are UNSURE what occupies some stretch of time, fall back to the upstream SFX LoRA predictions
+  for that time range and use them to cover it rather than leaving a hole.
+- Segments may overlap; continuous backgrounds (music, drone, room tone) are single entries spanning
+  their full duration.
+- BACKGROUND AT ALL TIMES: at every moment there is either some background sound or silence. For every
+  span of the timeline, emit a sound_event that describes what is in the background there (e.g. "city
+  traffic hum", "soft restaurant chatter and clinking glasses", "tense orchestral underscore", "wind and
+  distant birdsong"). If a span genuinely has no audible background, emit a sound_event explicitly marking
+  it as silence/room tone (e.g. "near silence with faint room tone", loudness "quiet"). Speech segments
+  may overlap these background sound_events — the background coverage is in addition to the speech.
 
 ## Background Information
 
@@ -237,14 +292,17 @@ class MOSSAnnotator:
         else:
             template = ENSEMBLE_ASR_PROMPT
 
+        raw_audio = load_audio(str(audio_path), sample_rate=self.mel_sr)
+        duration = len(raw_audio) / float(self.mel_sr)
+
         instruction = (
             template
             .replace("{context}", context)
             .replace("{schema}", SCHEMA_BLOCK)
             .replace("{speaker_rule}", SPEAKER_RULE)
+            .replace("{duration}", f"{duration:.2f}")
         )
 
-        raw_audio = load_audio(str(audio_path), sample_rate=self.mel_sr)
         inputs = self.processor(
             text=instruction, audios=[raw_audio], return_tensors="pt"
         ).to(self.device)
@@ -283,6 +341,7 @@ class MOSSAnnotator:
         qwen3_utts: List[Dict],
         whisper_analysis: List[Dict],
         sfx_predictions: List[Dict],
+        extra_detections: Optional[List[Dict]] = None,
     ) -> str:
         """Build context block for triple ASR reconciliation.
 
@@ -292,6 +351,9 @@ class MOSSAnnotator:
             qwen3_utts: Utterances from Qwen3-ASR + Sortformer.
             whisper_analysis: Per-segment voice analysis results.
             sfx_predictions: LoRA SFX sound event predictions.
+            extra_detections: Optional specialist-detected candidate sound effects,
+                each {start, end, confidence?, caption}. Presented to MOSS neutrally as
+                candidates to verify (they may be hallucinations).
 
         Returns:
             Formatted context string for the MOSS prompt.
@@ -359,6 +421,19 @@ class MOSSAnnotator:
         else:
             lines.append("### Sound Event Predictions: Not available for this scene")
             lines.append("")
+
+        # Specialist detector: extra candidate sound effects (verify before keeping)
+        if extra_detections:
+            lines.append("### Additional Sound Effects Detected by a Specialist Detector")
+            lines.append("**Candidates only — integrate a sound_event for one ONLY if you can actually "
+                         "hear it at that time. These may be false positives; ignore any you cannot hear.**")
+            lines.append("")
+            for i, e in enumerate(extra_detections):
+                lines.append(
+                    f"**Detection {i+1}** [{e.get('start','?')}s - {e.get('end','?')}s]: "
+                    f"{e.get('caption', e.get('description', ''))}"
+                )
+                lines.append("")
 
         return "\n".join(lines)
 

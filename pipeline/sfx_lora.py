@@ -25,7 +25,7 @@ class SFXDetector:
     """
 
     BASE_MODEL = "OpenMOSS-Team/MOSS-Audio-8B-Instruct"
-    LORA_REPO = "LAION-AI/moss-audio-sfx-lora-v4"
+    LORA_REPO = "laion/moss-audio-sfx-lora-v4"
 
     PROMPT_TEMPLATE = (
         "Please describe all audio events in this audio together with "
