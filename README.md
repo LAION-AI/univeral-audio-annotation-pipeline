@@ -153,7 +153,7 @@ python -m pipeline.run_pipeline \
 | Sortformer | `nvidia/diar_sortformer_4spk-v1` | ~2 GB |
 | Qwen3-ASR | `Qwen/Qwen3-ASR-1.7B` + `Qwen/Qwen3-ForcedAligner-0.6B` | ~8 GB |
 | Whisper experts (x3) | `laion/BUD-E-Whisper`, `laion/timbre-whisper`, `laion/voice-tagging-whisper` | ~2 GB total |
-| SFX LoRA | `OpenMOSS-Team/MOSS-Audio-8B-Instruct` + `LAION-AI/moss-audio-sfx-lora-v4` | ~18 GB |
+| SFX LoRA | `OpenMOSS-Team/MOSS-Audio-8B-Instruct` + `laion/moss-audio-sfx-lora-v4` | ~18 GB |
 | MOSS Annotator | `OpenMOSS-Team/MOSS-Audio-8B-Thinking` | ~18 GB |
 
 **Total for triple_greedy**: ~40-50 GB VRAM (models loaded/unloaded sequentially on a single GPU).
@@ -210,7 +210,7 @@ examples/
 
 ## Links
 
-- **LoRA Weights**: [LAION-AI/moss-audio-sfx-lora-v4](https://huggingface.co/LAION-AI/moss-audio-sfx-lora-v4)
+- **LoRA Weights**: [laion/moss-audio-sfx-lora-v4](https://huggingface.co/laion/moss-audio-sfx-lora-v4)
 - **MOSS-Audio**: [OpenMOSS-Team/MOSS-Audio-8B-Thinking](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-8B-Thinking)
 - **Evaluation Grid**: [GitHub Pages](https://laion-ai.github.io/univeral-audio-annotation-pipeline/eval_grid/)
 
