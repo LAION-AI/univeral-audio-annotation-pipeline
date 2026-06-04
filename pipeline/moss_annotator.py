@@ -154,6 +154,20 @@ Reconciliation strategy — three ASR sources vote on the WORDS/CONTENT:
 
 Use the reconciled transcripts. Fill speaker attributes from voice analysis + your listening.
 
+### SPEECH COMPLETENESS (MANDATORY — DO NOT DROP TRANSCRIBED SPEECH)
+
+Transcribe EVERY utterance that the ASR systems found. The combined ASR output is the FLOOR for
+speech content — your annotation must contain **at least as much speech as the ASR sources provide**,
+never less. Specifically:
+- Do NOT drop, skip, omit, shorten, summarise, or truncate any words, phrases or sentences that appear
+  in the ASR transcripts. If the ASR systems heard a full sentence, output the full sentence.
+- If a word or phrase appears in TWO or THREE of the ASR transcripts, it is high-confidence real speech
+  and MUST appear in your output — there is no excuse to leave it out.
+- Cover the speech across the WHOLE clip, not just the beginning. A common failure is transcribing the
+  first utterance and dropping later ones — do not do this; walk through every ASR utterance to the end.
+- You may fix wording, merge fragments into natural sentences, and split by speaker, but the full spoken
+  content must survive. When unsure whether to include a phrase the ASRs reported, INCLUDE it.
+
 SINGING vs SPEECH: the upstream Whisper voice-tagging/timbre experts tend to report "talking" even when
 a segment is actually being sung. Rely on your own audio judgment: if you hear melody, sustained pitches
 or musical rhythm, treat it as singing and state that explicitly in the segment's `speaking_style`
