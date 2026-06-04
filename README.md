@@ -20,6 +20,11 @@ Produces structured JSON annotations from any audio file, covering speech transc
 > bash run_all.sh --audio /path/to/clips --workdir ./uaap_work --envs ./envs
 > ```
 
+### 🔗 Links
+
+- **Live predictions (example report):** https://laion-ai.github.io/univeral-audio-annotation-pipeline/predictions/
+- **Model mirror on Hugging Face** (all weights + code, self-contained): https://huggingface.co/laion/universal-audio-annotation-pipeline
+
 ## Pipeline Architecture
 
 The **default ensemble** fuses three ASR systems, the Whisper voice experts, and two
