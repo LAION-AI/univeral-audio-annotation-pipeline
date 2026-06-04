@@ -14,6 +14,7 @@ Set ``UAAP_MOSS_SRC`` to the MOSS-Audio source checkout (provides ``src.*``).
 """
 import os, time
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 from _common import (block_flash_attn, add_repo_to_path, get_workdir, load_index,
                      load_json, save_json)
