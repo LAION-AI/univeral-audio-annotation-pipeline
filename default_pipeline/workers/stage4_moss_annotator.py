@@ -35,16 +35,32 @@ def main():
     for it in index:
         t0 = time.time()
         wd = it["workdir"]
+        if os.path.exists(f"{wd}/predictions.json"): continue   # resume: skip done clips
         sfx = load_json(f"{wd}/sfx.json")   # [] if SFX stage was not run
-        context = moss.build_triple_context(
-            load_json(f"{wd}/vibevoice.json"),
-            load_json(f"{wd}/parakeet.json"),
-            load_json(f"{wd}/qwen3.json"),
-            load_json(f"{wd}/whisper.json"),
-            sfx,
-            extra_detections=load_json(f"{wd}/vocalburst.json"),  # [] if VB stage not run
-        )
-        ann = moss.annotate(it["wav"], context, prompt_mode="triple", do_sample=False)
+        nemotron = load_json(f"{wd}/nemotron.json")
+        if nemotron:
+            # DEFAULT (recommended): Nemotron words + VibeVoice/Sortformer diarization,
+            # detailed sound-event & music captions.
+            context = moss.build_nemotron_context(
+                load_json(f"{wd}/vibevoice.json"),
+                nemotron,
+                load_json(f"{wd}/sortformer_diar.json"),
+                load_json(f"{wd}/whisper.json"),
+                sfx,
+                extra_detections=load_json(f"{wd}/vocalburst.json"),
+            )
+            ann = moss.annotate(it["wav"], context, prompt_mode="nemotron", do_sample=False)
+        else:
+            # Fallback to the legacy triple-ASR ensemble if a Nemotron stage was not run.
+            context = moss.build_triple_context(
+                load_json(f"{wd}/vibevoice.json"),
+                load_json(f"{wd}/parakeet.json"),
+                load_json(f"{wd}/qwen3.json"),
+                load_json(f"{wd}/whisper.json"),
+                sfx,
+                extra_detections=load_json(f"{wd}/vocalburst.json"),
+            )
+            ann = moss.annotate(it["wav"], context, prompt_mode="triple", do_sample=False)
         # Deterministic full-timeline coverage backstop.
         ann = fill_timeline_gaps(ann, sf.info(it["wav"]).duration, sfx_predictions=sfx)
         save_json(f"{wd}/predictions.json", ann)

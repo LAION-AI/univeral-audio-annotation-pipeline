@@ -24,6 +24,7 @@ def main():
     asr = VibeVoiceASR()
     for it in index:
         t0 = time.time()
+        if os.path.exists(os.path.join(it["workdir"], "vibevoice.json")): continue   # resume
         utts = asr.run(it["wav"])
         save_json(os.path.join(it["workdir"], "vibevoice.json"), utts)
         print(f"  [{it['stem']}] {len(utts)} utts ({time.time()-t0:.1f}s)", flush=True)

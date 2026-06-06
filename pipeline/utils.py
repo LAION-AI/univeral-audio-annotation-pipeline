@@ -53,6 +53,14 @@ def extract_json(text: str):
     return objects if objects else None
 
 
+def _coerce_time(x):
+    """MOSS occasionally emits timestamps as strings (e.g. "9.80") or null; make them floats."""
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def dedup_events(events: list) -> list:
     """Merge overlapping events with 70% temporal overlap threshold.
 
@@ -61,6 +69,13 @@ def dedup_events(events: list) -> list:
     """
     if not events:
         return events
+    # Normalise timestamps to floats so downstream consumers never see string/None times.
+    for evt in events:
+        if isinstance(evt, dict):
+            if "start_time" in evt:
+                evt["start_time"] = _coerce_time(evt.get("start_time"))
+            if "end_time" in evt:
+                evt["end_time"] = _coerce_time(evt.get("end_time"))
     seen = []
     for evt in events:
         is_dup = False

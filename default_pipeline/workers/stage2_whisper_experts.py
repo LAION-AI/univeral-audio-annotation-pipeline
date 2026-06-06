@@ -24,6 +24,7 @@ def main():
     for it in index:
         t0 = time.time()
         wd = it["workdir"]
+        if os.path.exists(f"{wd}/whisper.json"): continue   # resume: skip done clips
         primary = (load_json(f"{wd}/parakeet.json") or load_json(f"{wd}/vibevoice.json")
                    or load_json(f"{wd}/qwen3.json"))
         analysis = w.analyze(it["wav"], primary) if primary else []

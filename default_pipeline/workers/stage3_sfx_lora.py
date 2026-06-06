@@ -27,6 +27,7 @@ def main():
     sfx = SFXDetector(device="cuda:0", moss_audio_path=MOSS_SRC or None)
     for it in index:
         t0 = time.time()
+        if os.path.exists(os.path.join(it["workdir"], "sfx.json")): continue   # resume
         preds = sfx.run(it["wav"], segment_duration="medium", overlapping=True)
         save_json(os.path.join(it["workdir"], "sfx.json"), preds)
         print(f"  [{it['stem']}] {len(preds)} events ({time.time()-t0:.1f}s)", flush=True)

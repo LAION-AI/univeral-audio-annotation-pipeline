@@ -2,17 +2,19 @@
 
 Produces structured JSON annotations from any audio file, covering speech transcription, speaker diarization, emotions, vocal bursts, sound effects, and music.
 
-**Best configuration: Triple ASR greedy** (combined equal-weight score: **4.13/5.00**)
+**Best configuration: Nemotron 3.5 words + VibeVoice/Sortformer diarization** (`nemotron_vibevoice`) — the top-scoring pipeline on [SoundScape-Bench](#evaluation-results) (Reward **0.236**), ahead of every other pipeline configuration and of Gemini 3 Flash.
 
 > ### ⭐ Recommended: the default pipeline
 > A turnkey, end-to-end implementation of this best configuration lives in
 > **[`default_pipeline/`](default_pipeline/)** — the **default, suggested configuration**.
-> It runs the full triple-ASR ensemble (VibeVoice + Parakeet + Qwen3, greedy) with the
-> Whisper experts, the SFX LoRA sound-event detector and MOSS-Audio-8B-Thinking, adds
-> **expressive emotion & speaking-style captions**, strict diarization-only speaker
-> identity, and explicit **singing** detection, and produces per-clip JSON plus a
-> self-contained HTML report. See **[docs/default_pipeline.md](docs/default_pipeline.md)**
-> for model weights, setup and run instructions.
+> It uses **Nemotron 3.5** for the words (what is said), **VibeVoice + Sortformer** for the
+> diarization and timing, plus the Whisper experts, the SFX LoRA sound-event detector and
+> MOSS-Audio-8B-Thinking. It adds **expressive emotion & speaking-style captions**, **detailed
+> sound-effect captions and a dedicated `music` segment type** (genre / instrumentation / tempo /
+> mood), strict diarization-only speaker identity, and explicit **singing** detection, and produces
+> per-clip JSON plus a self-contained HTML report. See **[docs/default_pipeline.md](docs/default_pipeline.md)**
+> for model weights, setup and run instructions. The legacy triple-ASR ensemble (VibeVoice +
+> Parakeet + Qwen3) is still available as an option.
 >
 > ```bash
 > cd default_pipeline && bash setup_environments.sh ./envs
@@ -27,23 +29,26 @@ Produces structured JSON annotations from any audio file, covering speech transc
 
 ## Pipeline Architecture
 
-The **default ensemble** fuses three ASR systems, the Whisper voice experts, and two
-specialist sound-event pre-passes into a single MOSS-Audio reasoning stage:
+The **default configuration** pairs Nemotron 3.5 (words) with VibeVoice + Sortformer
+(diarization/timing), the Whisper voice experts, and two specialist sound-event pre-passes,
+fused by a single MOSS-Audio reasoning stage:
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │                    INPUT: Audio File (any length)                      │
 └───────────────────────────────────┬───────────────────────────────────┘
                                      │
-        ┌──────────────┬─────────────┴──────────────┐
-        ▼              ▼                             ▼
-  ┌──────────┐   ┌──────────┐                 ┌──────────┐
-  │VibeVoice │   │Parakeet  │                 │ Qwen3    │
-  │  ASR     │   │TDT v3 +  │                 │ASR 1.7B +│
-  │(diarize) │   │Sortformer│                 │ Aligner  │
-  └────┬─────┘   └────┬─────┘                 └────┬─────┘
-       │              │  Diarized transcripts      │
-       └──────┬───────┴───────────────┬────────────┘
+        ┌──────────────────────────┴──────────────────┐
+        ▼                                              ▼
+  ┌──────────────┐                          ┌────────────────────┐
+  │ VibeVoice    │                          │ Nemotron 3.5 ASR + │
+  │ ASR          │                          │ Sortformer         │
+  │ (diarization │                          │ (words + secondary │
+  │  & timing    │                          │  diarization)      │
+  │  authority)  │                          │                    │
+  └──────┬───────┘                          └─────────┬──────────┘
+         │   diarization / timing      words / what is said
+         └──────────────┬──────────────────────┬───────┘
               ▼                        ▼
   ┌──────────────────────┐  ┌──────────────────────────────┐
   │ Whisper experts (x3) │  │ Specialist sound-event prepass│
@@ -56,21 +61,22 @@ specialist sound-event pre-passes into a single MOSS-Audio reasoning stage:
                              ▼
         ┌──────────────────────────────────────────────┐
         │            MOSS-Audio-8B-Thinking             │
-        │  triple-ASR vote · diarization-only speakers  │
-        │  expressive emotion & speaking-style captions │
+        │  Nemotron words on VibeVoice timeline         │
+        │  diarization-only speakers · emotion & style  │
+        │  DETAILED sound-event + dedicated music caps  │
         │  singing flag · full-timeline coverage hint   │
         └───────────────────────┬──────────────────────┘
                                 │  + deterministic gap-fill
                                 ▼     (non-speech background only)
         ┌──────────────────────────────────────────────┐
         │   OUTPUT: Structured JSON (covers full clip)  │
-        │   [speech · vocal_burst · sound_event]        │
+        │   [speech · vocal_burst · sound_event · music]│
         └──────────────────────────────────────────────┘
 ```
 
 ## Output Format
 
-The pipeline produces a JSON array of segment dictionaries. Three segment types:
+The pipeline produces a JSON array of segment dictionaries. Four segment types:
 
 ### Speech segment
 ```json
@@ -114,6 +120,17 @@ The pipeline produces a JSON array of segment dictionaries. Three segment types:
 }
 ```
 
+### Music segment
+```json
+{
+  "type": "music",
+  "start_time": 9.80,
+  "end_time": 15.10,
+  "description": "Upbeat acoustic folk-pop: brightly strummed steel-string guitar and light tambourine, mid-tempo ~110 BPM, major key, warm and nostalgic mood, no vocals",
+  "loudness": "moderate"
+}
+```
+
 ### Field Reference
 
 | Field | Values |
@@ -140,23 +157,25 @@ pip install -r requirements.txt
 python -m pipeline.run_pipeline \
   --audio input.wav \
   --output output.json \
-  --config triple_greedy \
+  --config nemotron_vibevoice \
   --gpus 0
 ```
 
 ### Configurations
 
-| Config | ASR Systems | Decoding | Combined Score |
-|--------|-------------|----------|----------------|
-| `triple_greedy` ⭐ **default ensemble** | VibeVoice + Parakeet + Qwen3 | Greedy | **4.13** |
-| `ensemble_greedy` | Parakeet + Qwen3 | Greedy | 3.91 |
-| `vibevoice` | VibeVoice only | Greedy | 3.80 |
+| Config | ASR (words / diarization) | Notes |
+|--------|---------------------------|-------|
+| `nemotron_vibevoice` ⭐ **default** | Nemotron 3.5 words / VibeVoice + Sortformer diarization | Best on SoundScape-Bench (Reward **0.236**); detailed sound-event + `music` captions |
+| `triple_greedy` (legacy ensemble) | VibeVoice + Parakeet + Qwen3 | Previous default; top on the older 60-scene LLM-judged eval (4.13) |
+| `ensemble_greedy` | Parakeet + Qwen3 | Dual ASR |
+| `vibevoice` | VibeVoice only | Single ASR |
 
-⭐ **`triple_greedy` is the default ensemble.** The turnkey
+⭐ **`nemotron_vibevoice` is the default.** The turnkey
 [`default_pipeline/`](default_pipeline/) runs it with the SFX LoRA sound-event detector,
 the vocal-burst locator (threshold 0.7) + sound-effect captioner, expressive emotion &
-speaking-style captions, diarization-only speaker identity, singing detection, and
-guaranteed full-timeline coverage. See [docs/default_pipeline.md](docs/default_pipeline.md).
+speaking-style captions, detailed sound-effect and dedicated `music` captions,
+diarization-only speaker identity, singing detection, and guaranteed full-timeline coverage.
+See [docs/default_pipeline.md](docs/default_pipeline.md).
 
 ## Model Requirements
 
@@ -172,15 +191,41 @@ guaranteed full-timeline coverage. See [docs/default_pipeline.md](docs/default_p
 | Sound-effect captioner | `laion/sound-effect-captioning-whisper` | ~1 GB |
 | MOSS Annotator | `OpenMOSS-Team/MOSS-Audio-8B-Thinking` | ~18 GB |
 
-**Total for triple_greedy**: ~40-50 GB VRAM (models loaded/unloaded sequentially; VibeVoice-ASR
-is sharded across two GPUs). With multi-GPU, components can run in parallel on separate GPUs.
+The default `nemotron_vibevoice` config drops Parakeet and Qwen3 (using Nemotron 3.5 +
+Sortformer for words instead), so it is **lighter** than the legacy triple ensemble: it needs
+VibeVoice (~16 GB) + Nemotron 3.5/Sortformer (~5 GB) + Whisper experts + SFX LoRA + MOSS,
+loaded/unloaded sequentially. With multi-GPU, components can run in parallel on separate GPUs.
 
 > The SFX LoRA `laion/moss-audio-sfx-lora-v4` is gated — request access and `huggingface-cli login`,
 > or run with `--no-sfx`. Full model table with links: [docs/default_pipeline.md](docs/default_pipeline.md).
 
 ## Evaluation Results
 
-Tested 8 configurations across 60 scenes (50 synthetic TTS + 10 YouTube), scored by Gemini 3.1 Pro on 9 dimensions (0-5 scale).
+### SoundScape-Bench (200 multilingual soundscapes, automatic answer-key scoring)
+
+The current default was selected on **[SoundScape-Bench](https://huggingface.co/datasets/laion/soundscape-bench)** — 200
+held-out soundscapes (EN/ZH/FR/DE/ES/NL, ~25 % overlapping speech) built from understood pieces so
+every event has an exact answer key. The headline **Reward** = IoU(timing) × content, where content is
+a weighted mix of caption cosine and (1 − WER) for speech, averaged over all answer-key events.
+
+| # | System | Reward | IoU | F1 | WER | sound/music cos |
+|---|--------|--------|-----|-----|-----|-----------------|
+| 1 | Gemini 3.1 Pro (omni) | 0.297 | 0.615 | 0.270 | 72 % | 0.385 |
+| 2 | Gemini 3.5 Flash (omni) | 0.256 | 0.556 | 0.233 | 67 % | 0.310 |
+| 3 | **UAAP `nemotron_vibevoice` ⭐ (this default)** | **0.236** | 0.457 | 0.191 | 65 % | 0.287 |
+| 4 | Gemini 3 Flash (omni) | 0.212 | 0.450 | 0.172 | 66 % | 0.262 |
+| 5 | UAAP triple-ASR ensemble (legacy default) | 0.196 | 0.388 | 0.145 | 66 % | 0.226 |
+| 6 | UAAP Sortformer + Nemotron 3.5 (no VibeVoice diar) | 0.153 | 0.331 | 0.112 | 59 % | 0.223 |
+| 7 | GPT-Audio 1.5 (omni) | 0.097 | 0.223 | 0.097 | 61 % | 0.152 |
+
+The default pipeline is the **strongest non-Gemini system and the best UAAP configuration** — it beats
+the legacy triple ensemble by +20 % Reward and edges out Gemini 3 Flash. Two changes drive the gain:
+emitting a dedicated **`music`** type (the legacy configs emit `0` music events, so every music answer
+scored zero) and asking MOSS for **detailed sound-effect captions**.
+
+### Legacy LLM-judged eval (60 scenes, Gemini 3.1 Pro, 0–5 scale)
+
+Earlier configuration sweep that selected the previous triple-ASR default:
 
 | # | ASR | Decoding | Synthetic | YouTube | Combined |
 |---|-----|----------|-----------|---------|----------|
@@ -205,20 +250,22 @@ default_pipeline/        # ⭐ Default recommended configuration (turnkey script
   run_all.sh             # Run all stages end-to-end
   prepare_audio.py       # Stage 0: decode + index
   workers/               # One script per stage:
-    stage1a_vibevoice.py #   VibeVoice-ASR
-    stage1b_parakeet.py  #   Parakeet TDT v3 + Sortformer
-    stage1c_qwen3.py     #   Qwen3-ASR + ForcedAligner
+    stage1a_vibevoice.py #   VibeVoice-ASR (diarization / timing authority)
+    stage1_nemotron_sortformer.py #  ⭐ Nemotron 3.5 + Sortformer (default word source)
+    stage1b_parakeet.py  #   Parakeet TDT v3 + Sortformer (legacy ensemble option)
+    stage1c_qwen3.py     #   Qwen3-ASR + ForcedAligner (legacy ensemble option)
     stage2_whisper_experts.py  # emotion/timbre/style
     stage3_sfx_lora.py   #   SFX LoRA sound events
     stage3b_vocalburst.py#   Vocal-burst locator + captioner
-    stage4_moss_annotator.py   # MOSS final annotation (greedy)
+    stage4_moss_annotator.py   # MOSS final annotation (greedy; auto-detects ASR JSONs)
   build_report.py        # Self-contained HTML report
 
 pipeline/
   run_pipeline.py        # Main entry point (single-process reference implementation)
   asr_vibevoice.py       # VibeVoice-ASR component
-  asr_parakeet.py        # Parakeet TDT v3 + Sortformer
-  asr_qwen3.py           # Qwen3-ASR-1.7B + ForcedAligner
+  asr_nemotron.py        # ⭐ Nemotron 3.5 + Sortformer (default word source)
+  asr_parakeet.py        # Parakeet TDT v3 + Sortformer (legacy ensemble option)
+  asr_qwen3.py           # Qwen3-ASR-1.7B + ForcedAligner (legacy ensemble option)
   whisper_experts.py     # Emotion/timbre/style Whisper models
   sfx_lora.py            # LoRA SFX sound event detection
   vocalburst_locator.py  # Vocal-burst locator + sound-effect captioner

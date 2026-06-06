@@ -12,9 +12,11 @@ Usage:
     python -m pipeline.run_pipeline --audio input.wav --output output.json
 
 Configurations:
-    triple_greedy  - Best overall (combined_eq=4.13): 3 ASR systems + greedy decoding
+    nemotron_vibevoice - DEFAULT, best on SoundScape-Bench: Nemotron 3.5 words +
+                         VibeVoice/Sortformer diarization + detailed sound-event & music captions
+    triple_greedy   - Legacy ensemble: VibeVoice + Parakeet + Qwen3 + greedy decoding
     ensemble_greedy - Dual ASR (Parakeet + Qwen3) + greedy decoding
-    vibevoice      - Single ASR (VibeVoice only) + greedy decoding
+    vibevoice       - Single ASR (VibeVoice only) + greedy decoding
 """
 
 import argparse
@@ -36,9 +38,9 @@ def parse_args():
     )
     parser.add_argument(
         "--config",
-        choices=["triple_greedy", "ensemble_greedy", "vibevoice"],
-        default="triple_greedy",
-        help="Pipeline configuration (default: triple_greedy)",
+        choices=["nemotron_vibevoice", "triple_greedy", "ensemble_greedy", "vibevoice"],
+        default="nemotron_vibevoice",
+        help="Pipeline configuration (default: nemotron_vibevoice — best on SoundScape-Bench)",
     )
     parser.add_argument(
         "--gpus",
@@ -94,14 +96,25 @@ def run_pipeline(args):
     vibevoice_utts = []
     parakeet_utts = []
     qwen3_utts = []
+    nemotron_utts = []
     diar_segs = []
 
-    if config in ("triple_greedy", "vibevoice"):
+    if config in ("nemotron_vibevoice", "triple_greedy", "vibevoice"):
         print("[1/5] Running VibeVoice-ASR...")
         from .asr_vibevoice import VibeVoiceASR
         vv = VibeVoiceASR(device=primary_gpu)
         vibevoice_utts = vv.run(audio_path)
         vv.cleanup()
+
+    if config == "nemotron_vibevoice":
+        print("[1/5] Running Nemotron 3.5 + Sortformer...")
+        from .asr_nemotron import NemotronSortformerASR
+        diar_gpu = f"cuda:{gpu_ids[1]}" if len(gpu_ids) > 1 else primary_gpu
+        nemo = NemotronSortformerASR(asr_device=primary_gpu, diar_device=diar_gpu)
+        diar_segs = nemo._diarize(audio_path)
+        words = nemo._transcribe(audio_path)
+        nemotron_utts = nemo._merge(words, diar_segs)
+        nemo.cleanup()
 
     if config in ("triple_greedy", "ensemble_greedy"):
         print("[1/5] Running Parakeet TDT v3 + Sortformer...")
@@ -121,7 +134,7 @@ def run_pipeline(args):
         qwen3.cleanup()
 
     # Use best available utterances for Whisper segmentation
-    primary_utts = parakeet_utts or vibevoice_utts or qwen3_utts
+    primary_utts = nemotron_utts or parakeet_utts or vibevoice_utts or qwen3_utts
     if not primary_utts:
         print("ERROR: No ASR results obtained. Exiting.")
         sys.exit(1)
@@ -163,7 +176,15 @@ def run_pipeline(args):
         moss_audio_path=args.moss_audio_path,
     )
 
-    if config == "triple_greedy":
+    if config == "nemotron_vibevoice":
+        context = moss.build_nemotron_context(
+            vibevoice_utts, nemotron_utts, diar_segs,
+            whisper_analysis, sfx_predictions,
+        )
+        annotations = moss.annotate(
+            audio_path, context, prompt_mode="nemotron", do_sample=False
+        )
+    elif config == "triple_greedy":
         context = moss.build_triple_context(
             vibevoice_utts, parakeet_utts, qwen3_utts,
             whisper_analysis, sfx_predictions,

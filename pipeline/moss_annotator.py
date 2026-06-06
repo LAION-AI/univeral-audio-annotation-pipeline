@@ -19,7 +19,7 @@ from .utils import strip_thinking, extract_json, dedup_events
 
 SCHEMA_BLOCK = r"""## Output Schema
 
-Return a JSON array of segment dictionaries. Each segment uses one of three schemas:
+Return a JSON array of segment dictionaries. Each segment uses one of four schemas:
 
 ### Speech segment
 ```json
@@ -64,8 +64,19 @@ Return a JSON array of segment dictionaries. Each segment uses one of three sche
 }
 ```
 
+### Music segment  (USE THIS TYPE FOR MUSIC — do NOT label music as a sound_event)
+```json
+{
+  "type": "music",
+  "start_time": 9.80,
+  "end_time": 15.10,
+  "description": "Upbeat acoustic folk-pop: brightly strummed steel-string guitar and light tambourine, mid-tempo ~110 BPM, major key, warm and nostalgic mood, no vocals",
+  "loudness": "moderate"
+}
+```
+
 ### Field details
-- start_time/end_time: Seconds from audio start, 2 decimal places.
+- start_time/end_time: Seconds from audio start, 2 decimal places (always NUMBERS, never strings).
 - speaker_id: Consistent label per unique voice (speaker_1, speaker_2, ...).
 - emotion: A PRECISE EMOTION CAPTION (a few words up to ~10-12 words), NOT a single label and NOT a numeric intensity suffix. Describe the felt emotion using EmoNet voice-taxonomy emotion words (e.g. anger, contempt, disgust, fear, anxiety, sadness, disappointment, grief, joy, amusement, excitement, pride, relief, awe, tenderness, love, desire, embarrassment, guilt, shame, confusion, surprise, boredom, calmness, determination, etc.). Pin the intensity precisely with a modifier such as barely / slight / mild / moderate / clearly / strongly / intensely / extreme, and capture blends when two or more emotions co-occur (e.g. "clearly amused excitement edging into giddy joy", "barely contained anxiety under a calm surface", "intensely bitter disgust mixed with simmering anger"). Aim to nail the exact affect, not just name it.
 - age: baby, toddler, child, teenager, young_adult_20s, adult_30s, adult_40s, middle_aged_50s, senior_60s, elderly_70s_plus.
@@ -75,7 +86,11 @@ Return a JSON array of segment dictionaries. Each segment uses one of three sche
 - speaking_style: A VIVID DELIVERY CAPTION (a few words up to ~10-12 words) describing HOW it is spoken, not just the words. Capture the manner and register precisely, e.g. "low conspiratorial whisper, barely audible", "euphoric manic rant, words tumbling over each other", "slow, drowsy, slurring, barely staying awake", "booming drill-sergeant bark, clipped and commanding", "measured preacher-like cadence building to fervor", "flat deadpan mutter", "breathless pleading". Nail the specific speaking style rather than giving a generic description. SINGING: if what you hear is actually SUNG rather than spoken (melody, sustained pitches, rhythmic/musical phrasing), TRUST YOUR OWN LISTENING and say so explicitly here — even when the upstream voice-tagging / timbre experts report ordinary talking (those experts often mislabel singing as speech). Use clear wording such as "singing, melodic and sustained", "softly crooning a tune", "belting out a song", or "rhythmic, rap-like chanting". Most segments are plain speech, but whenever the delivery is sung or part-sung, flag it in this field.
 - language: ISO 639-1 code.
 - vocal_burst: Category label (chuckle, belly_laugh, gentle_sob, gasp, sigh, scoff, scream, etc.).
-- loudness (sound events only): quiet, moderate, loud, very_loud.
+- description (sound_event / music): write a RICH, SPECIFIC caption. For sound_event name the concrete
+  sound(s) (e.g. "sword being unsheathed", "ceramic mug set on wood", "high electronic beep") plus
+  source/texture; avoid vague mood words. For MUSIC give genre/style, key instruments, tempo feel, mood,
+  and whether it is vocal or instrumental — a bare "rock music" is not enough.
+- loudness (sound_event / music only): quiet, moderate, loud, very_loud.
 - Segments may overlap in time."""
 
 SPEAKER_RULE = """## SPEAKER IDENTITY RULE (MANDATORY)
@@ -248,6 +263,63 @@ Every second of audio should be covered by at least one annotation.
 Be thorough. Output ONLY the JSON array."""
 
 
+# ════════════════════════════════════════════════════════════
+# Default (recommended) prompt: Nemotron-3.5 words + VibeVoice/Sortformer diarization,
+# detailed sound-event AND music captions. This is the configuration that scores best on
+# SoundScape-Bench (see README / docs/evaluation_results.md).
+# ════════════════════════════════════════════════════════════
+NEMOTRON_PROMPT = r"""You are an expert audio annotation model. Annotate every audible event.
+
+{schema}
+
+{speaker_rule}
+
+## SOUND EVENT & MUSIC ANNOTATION — WRITE DETAILED CAPTIONS
+
+The upstream LoRA model provides MEDIUM-LENGTH overlapping sound-event windows below (one caption each).
+For every window:
+1. Listen to that time range yourself.
+2. Write a DETAILED, SPECIFIC description — name the concrete sound(s) (e.g. "sword being unsheathed",
+   "ceramic mug set on wood", "high electronic beep") plus source/texture/loudness. Do not settle for
+   vague mood words; the more concrete and detailed, the better.
+3. Break a broad window into separate sound_event entries where multiple distinct sounds occur.
+4. Refine timestamps to what you actually hear; add sounds the upstream missed.
+5. **MUSIC:** whenever music plays, emit it as a `music` segment (NOT a sound_event) and describe it in
+   RICH DETAIL (genre/style, instrumentation, tempo, key/mode if discernible, mood, vocal vs instrumental).
+   Continuous music = a single `music` entry spanning its full duration.
+These captions describe audio CONTENT ONLY. If a caption mentions a voice or "another speaker", do NOT
+treat it as a new speaker or a speech segment — speaker identity/count come from the diarization.
+
+## ASR — words from Nemotron 3.5; timing/diarization from VibeVoice + Sortformer
+
+- **Words / "what is being said" come from Nemotron 3.5** (shown below, Sortformer-diarized). Use
+  Nemotron's wording as the transcription; do NOT invent words it did not report, do NOT drop words it did.
+- **Timing + speaker diarization:** VibeVoice is the authority for the segment start/end times, the
+  speaker count, and which speaker speaks when (see the SPEAKER IDENTITY RULE). The raw **Sortformer
+  diarization** that Nemotron's transcript uses is shown as a secondary reference — use it to place
+  Nemotron's words onto VibeVoice's speaker timeline, not to add speakers beyond VibeVoice's count.
+- Map Nemotron's words onto VibeVoice's timeline: keep VibeVoice's boundaries/speaker assignment, fill
+  the words from Nemotron.
+
+### SPEECH COMPLETENESS (MANDATORY)
+Transcribe EVERY utterance Nemotron found — it is the FLOOR for speech content; never output less. Cover
+speech across the WHOLE clip, not just the start. When unsure whether to include a phrase Nemotron
+reported, INCLUDE it. SINGING: if you hear melody/sustained pitches, mark it in `speaking_style`.
+
+## COMPLETENESS (FULL-TIMELINE COVERAGE — MANDATORY)
+
+This clip is {duration} seconds long. Cover the ENTIRE span 0.00s–{duration}s with no gaps; the last
+segment must reach (≈){duration}s. Fill gaps with a sound_event (or "near silence with faint room tone",
+loudness "quiet"). Segments may overlap; continuous backgrounds (music, drone, room tone) are single
+entries spanning their full duration.
+
+## Background Information
+
+{context}
+
+Be thorough. Output ONLY the JSON array."""
+
+
 class MOSSAnnotator:
     """MOSS-Audio-8B-Thinking model for final structured annotation.
 
@@ -315,7 +387,9 @@ class MOSSAnnotator:
 
         t0 = time.time()
 
-        if prompt_mode == "triple":
+        if prompt_mode == "nemotron":
+            template = NEMOTRON_PROMPT
+        elif prompt_mode == "triple":
             template = TRIPLE_ASR_PROMPT
         else:
             template = ENSEMBLE_ASR_PROMPT
@@ -361,6 +435,82 @@ class MOSSAnnotator:
         n_events = len(parsed) if parsed else 0
         print(f"  MOSS annotator: {n_events} events ({elapsed:.1f}s)")
         return parsed or []
+
+    @staticmethod
+    def build_nemotron_context(
+        vibevoice_utts: List[Dict],
+        nemotron_utts: List[Dict],
+        sortformer_diar: Optional[List[Dict]],
+        whisper_analysis: List[Dict],
+        sfx_predictions: List[Dict],
+        extra_detections: Optional[List[Dict]] = None,
+    ) -> str:
+        """Context for the DEFAULT (recommended) configuration.
+
+        Words come from Nemotron 3.5 (Sortformer-diarized); VibeVoice is the timing/diarization
+        authority; the raw Sortformer diarization is a secondary reference. Sound-event and music
+        windows are presented for DETAILED captioning (music as its own `music` type).
+
+        Args:
+            vibevoice_utts: VibeVoice-ASR utterances (diarization / timing reference).
+            nemotron_utts: Nemotron-3.5 utterances (the word source), Sortformer-diarized.
+            sortformer_diar: Raw Sortformer diarization segments ({start,end,speaker}).
+            whisper_analysis: Per-segment voice analysis.
+            sfx_predictions: LoRA SFX sound-event windows (single caption each).
+            extra_detections: Optional specialist-detected candidate sound effects to verify.
+        """
+        lines = []
+        if nemotron_utts:
+            lines.append("### ASR — Nemotron 3.5 (word source; Sortformer-diarized)")
+            for s in nemotron_utts:
+                lines.append(f'- Speaker {s.get("speaker_id","?")}: '
+                             f'[{s.get("start_time","?")}s - {s.get("end_time","?")}s] '
+                             f'"{s.get("content","")}"')
+            lines.append("")
+        if sortformer_diar:
+            segs = ", ".join(f'spk{d.get("speaker","?")}[{d.get("start","?")}-{d.get("end","?")}s]'
+                             for d in sortformer_diar)
+            lines.append("### Sortformer diarization (secondary reference — the timeline Nemotron uses)")
+            lines.append(segs); lines.append("")
+        if vibevoice_utts:
+            lines.append("### Diarization & TIMING authority — VibeVoice: use its timestamps & speaker "
+                         "assignment (its WORDS are not used)")
+            for s in vibevoice_utts:
+                lines.append(f'- Speaker {s.get("speaker_id","?")}: '
+                             f'[{s.get("start_time","?")}s - {s.get("end_time","?")}s] '
+                             f'"{s.get("content","")}"')
+            lines.append("")
+        if whisper_analysis:
+            lines.append("### Per-Segment Voice Analysis (emotion / timbre / style)")
+            for seg in whisper_analysis:
+                lines.append(f"**Speaker {seg.get('speaker_id','?')} "
+                             f"[{seg.get('start_time','?')}s - {seg.get('end_time','?')}s]**:")
+                for k in ["emotion", "timbre", "style"]:
+                    v = seg.get(k)
+                    if v:
+                        lines.append(f"- {k.title()}: {str(v)[:400]}")
+            lines.append("")
+        if sfx_predictions:
+            lines.append("### Sound Event / Music Windows (single LoRA caption each — verify, then DESCRIBE IN DETAIL)")
+            lines.append("**Use type `music` for music, `sound_event` for everything else. Write rich, "
+                         "specific descriptions; refine timings; add missed sounds.**")
+            lines.append("")
+            for i, e in enumerate(sfx_predictions):
+                lines.append(f"**Window {i+1}** [{e.get('start_time','?')}s - {e.get('end_time','?')}s]: "
+                             f"{e.get('caption', e.get('description',''))}")
+                lines.append("")
+        else:
+            lines.append("### Sound Event Predictions: Not available for this scene"); lines.append("")
+        if extra_detections:
+            lines.append("### Additional Sound Effects Detected by a Specialist Detector")
+            lines.append("**Candidates only — integrate one ONLY if you can actually hear it at that time; "
+                         "ignore false positives.**")
+            lines.append("")
+            for i, e in enumerate(extra_detections):
+                lines.append(f"**Detection {i+1}** [{e.get('start','?')}s - {e.get('end','?')}s]: "
+                             f"{e.get('caption', e.get('description',''))}")
+                lines.append("")
+        return "\n".join(lines)
 
     @staticmethod
     def build_triple_context(

@@ -29,10 +29,12 @@ run () { echo; echo ">>> $1"; shift; "$@"; }
 # Stage 0: decode to canonical wav + build index.json
 run "stage 0: prepare audio" "$PY_BASE" prepare_audio.py --audio "$AUDIO" --workdir "$WORKDIR"
 
-# Stage 1: three ASR systems (order matters: Parakeet produces diar segs for Qwen3)
-run "stage 1a: VibeVoice-ASR" "$ENVS/venv_vv/bin/python"   workers/stage1a_vibevoice.py "$WORKDIR"
-run "stage 1b: Parakeet+Sortformer" "$ENVS/venv_nemo/bin/python" workers/stage1b_parakeet.py "$WORKDIR"
-run "stage 1c: Qwen3-ASR"     "$ENVS/venv_qwen/bin/python" workers/stage1c_qwen3.py "$WORKDIR"
+# Stage 1: word ASR + diarization (DEFAULT = Nemotron 3.5 words + VibeVoice/Sortformer diarization).
+#   VibeVoice provides the diarization / timing authority; Nemotron 3.5 + Sortformer provide the words.
+#   The legacy triple-ASR ensemble (stage1b_parakeet.py + stage1c_qwen3.py) is still available — the
+#   stage-4 worker auto-detects which ASR JSONs are present. See docs/default_pipeline.md.
+run "stage 1a: VibeVoice-ASR (diarization/timing)" "$ENVS/venv_vv/bin/python" workers/stage1a_vibevoice.py "$WORKDIR"
+run "stage 1: Nemotron 3.5 + Sortformer (words)"   "$ENVS/venv_nemo/bin/python" workers/stage1_nemotron_sortformer.py "$WORKDIR"
 
 # Stage 2: Whisper experts
 run "stage 2: Whisper experts" "$PY_BASE" workers/stage2_whisper_experts.py "$WORKDIR"

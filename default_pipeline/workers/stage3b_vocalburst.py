@@ -27,6 +27,9 @@ def main():
                                              SAMPLE_RATE)
     workdir = get_workdir()
     index = load_index(workdir)
+    index = [it for it in index if not os.path.exists(os.path.join(it["workdir"], "vocalburst.json"))]  # resume
+    if not index:
+        print("all vocalburst.json present; skipping", flush=True); return
 
     # Stage 1: locate candidates across every clip (model loaded once).
     locator = VocalBurstLocator(device="cuda:0")
