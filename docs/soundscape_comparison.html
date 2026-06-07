@@ -1,0 +1,261 @@
+<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>SoundScape-Bench — model evaluation</title><style>
+:root{--bg:#0f1216;--card:#1a1f27;--ink:#e6e9ef;--mut:#9aa6b2;--acc:#6db3f2;--line:#2a313c}
+*{box-sizing:border-box}body{background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:38px 20px}
+.wrap{max-width:1000px;margin:0 auto}h1{font-size:27px;margin:0 0 6px}.sub{color:var(--mut);margin-bottom:22px}
+h2{font-size:21px;margin:1.7em 0 .5em;border-bottom:1px solid var(--line);padding-bottom:.3em}
+h3{font-size:17px;color:var(--acc);margin:1.3em 0 .4em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin-bottom:18px}
+table{width:100%;border-collapse:collapse;margin:1em 0;font-size:13.5px;font-variant-numeric:tabular-nums}
+th,td{padding:8px 9px;border-bottom:1px solid var(--line);text-align:center}
+th{color:var(--mut);font-size:11.5px;text-transform:uppercase;letter-spacing:.02em;background:#12171d}
+td:first-child,th:first-child{text-align:left}tbody tr:first-child{background:#13251c}tbody tr:hover{background:#12171d}
+.note{background:#12171d;border-left:3px solid var(--acc);padding:10px 14px;border-radius:6px;color:#cdd6e0;font-size:14px}
+.note2{color:var(--mut);font-size:12px}code{background:#12171d;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:.9em}
+.glos td:first-child{color:#ffd9a0;font-weight:600;white-space:nowrap}ul{margin:.4em 0}li{margin:.3em 0}
+</style></head><body><div class=wrap>
+<h1>SoundScape-Bench — "can a model describe everything in an audio clip?"</h1>
+<p class=sub>Comparing the LAION Universal Audio Annotation pipeline (two ASR back-ends) against omni LLMs
+(Gemini & GPT-Audio), on 200 held-out soundscapes. Beginner-friendly explanations below.</p>
+
+<div class=card>
+<h2>1. What is being tested (in plain words)</h2>
+<p>We play the model a <b>soundscape</b> — a short clip where several things happen at once: people
+talking (often in <b>different languages, sometimes over each other</b>), background music, sound effects
+(a door, a dog, rain), and little vocal noises (a laugh, a sigh). The model must write down
+<b>everything it hears</b> as a list, and for each item say <b>when it starts, when it ends, what type it
+is, and a description</b> — for speech also <b>the exact words, which speaker, the language, and the
+emotion/how it's said</b>.</p>
+<p>Because <b>we built every clip by gluing together pieces we already understand</b>, we know the
+<b>perfect answer</b> (the "answer key"). So grading can be 100% automatic.</p>
+</div>
+
+<div class=card>
+<h2>2. How we grade (the metrics)</h2>
+<p>For each real event we ask two questions and multiply the answers (so you need <b>both</b> right):
+<b>did the timing line up?</b> × <b>did the description match?</b></p>
+
+<div class=note style="border-left-color:#5ec88a;background:#12211a">
+<b>★ Headline score — "Reward" (the ranking metric).</b> For <u>every</u> event in the answer key we take
+its best-matching guess of the same type and reward it for getting both the <b>timing</b> and the
+<b>content</b> right, then <b>average over all events</b> (a missed event scores 0). The content part
+depends on the event type:
+<ul style="margin:.4em 0">
+<li><b>Speech</b> has two things to get right — the <i>words</i> and <i>how</i> they're said — so:
+<br><code>reward = IoU × ( ½·cos(emotion/style) + ½·(1 − WER) )</code><br>
+i.e. a <b>weighted sum of <code>IoU×cos</code> and <code>IoU×(1−WER)</code></b> — so the transcription
+accuracy (1 − Word Error Rate) counts for ASR/speech segments, alongside the "how-it's-said" caption match.</li>
+<li><b>Sound effects, music, vocal bursts</b> (no transcription): <code>reward = IoU × cos(caption)</code>.</li>
+</ul>
+Building blocks (also shown as their own columns):
+<b>IoU</b> ∈ [0,1] = time-overlap ÷ time-union of the two events (1 = identical timing).
+<b>cos</b> ∈ [0,1] = cosine similarity of the two captions in an embedding space (close meaning → 1).
+<b>1−WER</b> = word accuracy (1 minus Word Error Rate; per-character for Chinese). Multiplying by IoU means
+a guess only scores if it lands at the <b>right time</b> AND describes the <b>right thing</b>.
+The plain <b>IoU×cos</b> column ignores WER (so you can see content-match without transcription); the
+<b>IoU</b> column is timing alone.</div>
+
+<p>The other columns break the Reward down so you can see <i>where</i> a model wins or loses:</p>
+<table class=glos>
+<tr><td>IoU (timing)</td><td>"Intersection over Union": of the time the real event and the guess cover between them, what fraction do they agree on? 1 = perfect overlap, 0 = no overlap.</td></tr>
+<tr><td>meaning</td><td>How close the descriptions are. For <b>speech</b>: half is word-accuracy (1 − Word Error Rate) and half is how well the <b>emotion/"how"</b> caption matches (sentence-embedding cosine). For <b>sounds/music/bursts</b>: caption cosine similarity.</td></tr>
+<tr><td>speaker</td><td>For speech/bursts, did it attach the line to the <i>right person</i>? (speaker labels are matched up first, since names are arbitrary).</td></tr>
+<tr><td>F1</td><td>The headline grade. Combines <b>recall</b> ("of all real events, how many did we catch & describe well?") and <b>precision</b> ("of all our guesses, how many were real?") into one number. Low if you miss things OR invent things.</td></tr>
+<tr><td>WER</td><td>Word Error Rate on the transcription — lower is better (how wrong the words are; Chinese is scored per-character).</td></tr>
+<tr><td>how (cos)</td><td>Cosine similarity (0–1) between the model's emotion/style caption and the ground-truth one — "did it get <i>how</i> it was said?"</td></tr>
+<tr><td>snd (cos)</td><td>Caption cosine for sound-effect & music events — "did it describe the sounds/music right?"</td></tr>
+<tr><td>spkAcc</td><td>Fraction of matched speech events attached to the correct speaker (diarization-with-identity).</td></tr>
+<tr><td>halluc</td><td>Hallucination rate: fraction of the model's guesses that matched no real event (made-up).</td></tr>
+</table>
+<p class=note>Embedding model for all caption similarities: <code>google/embeddinggemma-300m</code>. WER via
+<code>jiwer</code>. Matching uses the Hungarian algorithm per event type (whitepaper recipe:
+event score = IoU × meaning × speaker → per-clip F1).</p>
+</div>
+
+<div class=card>
+<h2>3. Systems compared</h2>
+<ul>
+<li><b>UAAP pipeline (triple-ASR ensemble)</b> — the standard Universal Audio Annotation Pipeline:
+VibeVoice + Parakeet + Qwen3 ASR reconciled, Whisper expert voice tags, SFX-LoRA + vocal-burst detectors,
+all fused by MOSS-Audio-8B-Thinking into the final annotation.</li>
+<li><b>UAAP pipeline (Sortformer + Nemotron 3.5)</b> — the same pipeline with the three ASR models
+replaced by Sortformer diarization + Nemotron 3.5 ASR, everything else identical.</li>
+<li><b>UAAP EXP1 (experimental)</b> — a configuration test, <i>not</i> the standard pipeline. It reuses
+all the same intermediate results but changes how they are combined: <b>timing &amp; speaker
+diarization are taken from VibeVoice</b>, the <b>words</b> are decided by a <b>Parakeet + Nemotron 3.5</b>
+vote (agree → use verbatim; disagree → trust Nemotron 3.5), and every sound-effect window is given
+<b>two captions</b> (the SFX-LoRA caption plus one from the dedicated sound-effect captioner) which MOSS
+fuses into a more detailed sound description.</li>
+<li><b>UAAP EXP2 (experimental)</b> — a refinement of EXP1 (also reusing all intermediates). The noisy
+second SFX caption is <b>removed</b>; the words now come from <b>Nemotron 3.5 alone</b> (Sortformer-diarized,
+no Parakeet vote); <b>VibeVoice + Sortformer</b> supply diarization/timing; and MOSS is told to write
+<b>more detailed sound-effect descriptions</b> and to emit a dedicated <b>music</b> segment type with a
+rich description (genre, instruments, tempo, mood). The standard pipeline never emits a <code>music</code>
+type at all, so its music events score zero — EXP2 closes that gap.</li>
+<li><b>UAAP EXP3 (experimental)</b> — EXP2 with VibeVoice removed and <b>pyannote</b>
+(segmentation-3.0) added for speaker diarization <i>and</i> overlap detection. Where overlapping speech
+is detected, that region (plus surrounding speech) is cut out and re-transcribed by a <b>second,
+targeted Nemotron 3.5 pass</b> on top of the standard full-clip pass; both transcriptions are given to
+MOSS so it can recover words the full-clip pass garbles during overlaps. Tests whether targeted
+overlap re-ASR helps on the ~25% of clips with overlapping speech.</li>
+<li><b>Omni LLMs</b> — Gemini 3.1 Pro / 3.5 Flash / 3 Flash / 2.0 Flash, and GPT-Audio 1.5: the audio
+is sent directly with one <b>standardized, detailed annotation prompt</b> (identical for every model,
+with a worked JSON example) and the model returns the annotation in one shot.</li>
+</ul>
+</div>
+
+<div class=card>
+<h2>4. Results (200-clip subset)</h2>
+
+<table>
+<tr><th>rank · system</th><th>Reward ▾</th><th>IoU×cos</th><th>IoU</th><th>F1</th><th>recall</th><th>WER</th><th>how (cos)</th><th>snd (cos)</th><th>spkAcc</th><th>halluc</th><th>#pred/#true</th></tr>
+<tr>
+      <td>1. Gemini 3.1 Pro (omni)</td>
+      <td><b>0.297</b></td>
+      <td>0.303</td>
+      <td>0.615</td>
+      <td>0.270</td><td>0.293</td>
+      <td>72%</td><td>0.257</td><td>0.385</td>
+      <td>99%</td><td>23%</td>
+      <td>5.2 / 4.0</td></tr><tr>
+      <td>2. Gemini 3.5 Flash (omni)</td>
+      <td><b>0.256</b></td>
+      <td>0.263</td>
+      <td>0.556</td>
+      <td>0.233</td><td>0.253</td>
+      <td>67%</td><td>0.264</td><td>0.310</td>
+      <td>98%</td><td>23%</td>
+      <td>5.2 / 4.0</td></tr><tr>
+      <td>3. Gemma-4-12B TEXT-only fusion (EXP2 + DiCoW experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only 12B LLM fusion, no audio)</span></td>
+      <td><b>0.253</b></td>
+      <td>0.262</td>
+      <td>0.515</td>
+      <td>0.149</td><td>0.238</td>
+      <td>59%</td><td>0.313</td><td>0.273</td>
+      <td>82%</td><td>43%</td>
+      <td>9.2 / 4.0</td></tr><tr>
+      <td>4. Gemma-4-12B TEXT-only fusion (EXP2 experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only 12B LLM fusion, no audio)</span></td>
+      <td><b>0.248</b></td>
+      <td>0.259</td>
+      <td>0.512</td>
+      <td>0.144</td><td>0.234</td>
+      <td>56%</td><td>0.313</td><td>0.278</td>
+      <td>82%</td><td>44%</td>
+      <td>9.4 / 4.0</td></tr><tr>
+      <td>5. Gemma-4-E4B TEXT-only fusion (EXP2 + DiCoW experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only LLM fusion, no audio)</span></td>
+      <td><b>0.244</b></td>
+      <td>0.253</td>
+      <td>0.490</td>
+      <td>0.151</td><td>0.231</td>
+      <td>59%</td><td>0.319</td><td>0.269</td>
+      <td>86%</td><td>44%</td>
+      <td>8.5 / 4.0</td></tr><tr>
+      <td>6. Gemma-4-E4B TEXT-only fusion (EXP2 experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only LLM fusion, no audio)</span></td>
+      <td><b>0.237</b></td>
+      <td>0.247</td>
+      <td>0.479</td>
+      <td>0.146</td><td>0.225</td>
+      <td>59%</td><td>0.316</td><td>0.266</td>
+      <td>86%</td><td>44%</td>
+      <td>8.7 / 4.0</td></tr><tr>
+      <td>7. UAAP EXP2 — VibeVoice+Sortformer diarization + Nemotron 3.5 words + detailed SFX/music captions (→ MOSS-8B) <span class=note2>(experimental configuration — not the standard pipeline)</span></td>
+      <td><b>0.236</b></td>
+      <td>0.241</td>
+      <td>0.457</td>
+      <td>0.191</td><td>0.226</td>
+      <td>65%</td><td>0.300</td><td>0.287</td>
+      <td>91%</td><td>27%</td>
+      <td>5.6 / 4.0</td></tr><tr>
+      <td>8. Combo A — EXP2 + DiCoW overlap-aware ASR (diarization-conditioned Whisper) <span class=note2>(experimental — EXP2 + new model)</span></td>
+      <td><b>0.233</b></td>
+      <td>0.237</td>
+      <td>0.453</td>
+      <td>0.185</td><td>0.226</td>
+      <td>67%</td><td>0.299</td><td>0.271</td>
+      <td>93%</td><td>28%</td>
+      <td>5.8 / 4.0</td></tr><tr>
+      <td>9. Combo D — EXP2 + DiCoW + PretrainedSED + PANNs (full stack) <span class=note2>(experimental — EXP2 + new models)</span></td>
+      <td><b>0.229</b></td>
+      <td>0.233</td>
+      <td>0.442</td>
+      <td>0.174</td><td>0.223</td>
+      <td>67%</td><td>0.296</td><td>0.249</td>
+      <td>96%</td><td>30%</td>
+      <td>6.4 / 4.0</td></tr><tr>
+      <td>10. Combo C — EXP2 + PretrainedSED + PANNs music gate <span class=note2>(experimental — EXP2 + new models)</span></td>
+      <td><b>0.226</b></td>
+      <td>0.234</td>
+      <td>0.446</td>
+      <td>0.183</td><td>0.220</td>
+      <td>65%</td><td>0.294</td><td>0.269</td>
+      <td>94%</td><td>28%</td>
+      <td>5.6 / 4.0</td></tr><tr>
+      <td>11. Combo B — EXP2 + PretrainedSED strong-label sound events <span class=note2>(experimental — EXP2 + new model)</span></td>
+      <td><b>0.222</b></td>
+      <td>0.229</td>
+      <td>0.435</td>
+      <td>0.171</td><td>0.215</td>
+      <td>65%</td><td>0.302</td><td>0.250</td>
+      <td>94%</td><td>28%</td>
+      <td>5.9 / 4.0</td></tr><tr>
+      <td>12. Gemini 3 Flash (omni)</td>
+      <td><b>0.212</b></td>
+      <td>0.217</td>
+      <td>0.450</td>
+      <td>0.172</td><td>0.209</td>
+      <td>66%</td><td>0.255</td><td>0.262</td>
+      <td>98%</td><td>33%</td>
+      <td>6.6 / 4.0</td></tr><tr>
+      <td>13. UAAP EXP3 — pyannote diarization+overlap detection + Nemotron 3.5 (full + overlap-targeted re-ASR) + detailed SFX/music (→ MOSS-8B) <span class=note2>(experimental configuration — not the standard pipeline)</span></td>
+      <td><b>0.206</b></td>
+      <td>0.212</td>
+      <td>0.429</td>
+      <td>0.126</td><td>0.202</td>
+      <td>56%</td><td>0.293</td><td>0.250</td>
+      <td>97%</td><td>40%</td>
+      <td>9.2 / 4.0</td></tr><tr>
+      <td>14. UAAP pipeline — triple-ASR ensemble (VibeVoice + Parakeet + Qwen3 → MOSS-8B)</td>
+      <td><b>0.196</b></td>
+      <td>0.200</td>
+      <td>0.388</td>
+      <td>0.145</td><td>0.189</td>
+      <td>66%</td><td>0.296</td><td>0.226</td>
+      <td>93%</td><td>32%</td>
+      <td>6.5 / 4.0</td></tr><tr>
+      <td>15. UAAP EXP1 — VibeVoice diarization + Parakeet/Nemotron 3.5 wording + dual-caption SFX (→ MOSS-8B) <span class=note2>(experimental configuration — not the standard pipeline)</span></td>
+      <td><b>0.190</b></td>
+      <td>0.195</td>
+      <td>0.383</td>
+      <td>0.147</td><td>0.183</td>
+      <td>67%</td><td>0.295</td><td>0.195</td>
+      <td>94%</td><td>29%</td>
+      <td>6.1 / 4.0</td></tr><tr>
+      <td>16. UAAP pipeline — Sortformer + Nemotron 3.5 ASR (→ MOSS-8B)</td>
+      <td><b>0.153</b></td>
+      <td>0.162</td>
+      <td>0.331</td>
+      <td>0.112</td><td>0.150</td>
+      <td>59%</td><td>0.296</td><td>0.223</td>
+      <td>96%</td><td>35%</td>
+      <td>6.5 / 4.0</td></tr><tr>
+      <td>17. GPT-Audio 1.5 (omni)</td>
+      <td><b>0.097</b></td>
+      <td>0.104</td>
+      <td>0.223</td>
+      <td>0.097</td><td>0.106</td>
+      <td>61%</td><td>0.251</td><td>0.152</td>
+      <td>98%</td><td>36%</td>
+      <td>4.5 / 4.0</td></tr>
+</table>
+<p class=note><b>Ranked by Reward</b> (the headline score, explained above): weighted <code>IoU×cos</code> +
+<code>IoU×(1−WER)</code>, so timing, description <i>and</i> transcription accuracy all count. <b>F1</b> is the stricter all-or-nothing
+grade (it also punishes inventing events). <b>WER</b> lower = better. The benchmark is deliberately hard
+— overlapping multilingual speech over dense sound — so absolute numbers are low; the <i>ranking</i> and
+the per-dimension breakdown are what matter.</p>
+</div>
+
+<p class=sub style="border-top:1px solid var(--line);padding-top:1em">SoundScape-Bench · built from MLS /
+Emilia / AudioSet-grounded-captions / vocal-bursts / AI-music, answer keys in the UAAP schema. See
+<code>PROTOCOL.md</code> for how the data was made.</p>
+</div></body></html>

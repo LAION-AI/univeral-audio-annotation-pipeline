@@ -6,17 +6,24 @@
 # frees the GPU before the next stage). Every stage uses its dedicated venv.
 #
 # Usage:
-#   export UAAP_MOSS_SRC=/path/to/MOSS-Audio       # MOSS source checkout
-#   bash run_all.sh --audio /path/to/clips --workdir ./uaap_work --envs ./envs [--no-sfx]
+#   export HF_TOKEN=...                              # for gated pyannote (default fusion=gemma)
+#   export UAAP_MOSS_SRC=/path/to/MOSS-Audio        # only needed for --fusion moss
+#   bash run_all.sh --audio /path/to/clips --workdir ./uaap_work --envs ./envs [--no-sfx] [--fusion gemma|moss]
+#
+# Final-stage fusion:
+#   --fusion gemma  (DEFAULT) Gemma-4-12B text-only fusion + DiCoW overlap ASR (best Reward on
+#                   SoundScape-Bench; no audio in the final step). Adds pyannote + DiCoW + Gemma stages.
+#   --fusion moss   legacy MOSS-Audio-8B-Thinking annotator (audio-grounded; higher precision/F1).
 # ---------------------------------------------------------------------------
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-AUDIO=""; WORKDIR="./uaap_work"; ENVS="./envs"; SFX=1
+AUDIO=""; WORKDIR="./uaap_work"; ENVS="./envs"; SFX=1; FUSION="gemma"
 while [[ $# -gt 0 ]]; do case "$1" in
   --audio) AUDIO="$2"; shift 2;;
   --workdir) WORKDIR="$2"; shift 2;;
   --envs) ENVS="$2"; shift 2;;
   --no-sfx) SFX=0; shift;;
+  --fusion) FUSION="$2"; shift 2;;
   *) echo "unknown arg $1"; exit 1;;
 esac; done
 [[ -n "$AUDIO" ]] || { echo "need --audio"; exit 1; }
@@ -36,6 +43,12 @@ run "stage 0: prepare audio" "$PY_BASE" prepare_audio.py --audio "$AUDIO" --work
 run "stage 1a: VibeVoice-ASR (diarization/timing)" "$ENVS/venv_vv/bin/python" workers/stage1a_vibevoice.py "$WORKDIR"
 run "stage 1: Nemotron 3.5 + Sortformer (words)"   "$ENVS/venv_nemo/bin/python" workers/stage1_nemotron_sortformer.py "$WORKDIR"
 
+# Stage 1d/1e (default gemma fusion only): pyannote diarization+overlap, then DiCoW overlap-aware ASR
+if [[ "$FUSION" == "gemma" ]]; then
+  run "stage 1d: pyannote diarization + overlap" "$ENVS/venv_pyannote/bin/python" workers/stage_pyannote_diar.py "$WORKDIR"
+  run "stage 1e: DiCoW overlap-aware ASR"        "$ENVS/venv_dicow/bin/python"    workers/stage_dicow.py "$WORKDIR"
+fi
+
 # Stage 2: Whisper experts
 run "stage 2: Whisper experts" "$PY_BASE" workers/stage2_whisper_experts.py "$WORKDIR"
 
@@ -45,8 +58,12 @@ if [[ "$SFX" == "1" ]]; then
 fi
 run "stage 3b: vocal-burst candidates" "$PY_BASE" workers/stage3b_vocalburst.py "$WORKDIR"
 
-# Stage 4: MOSS final annotation (greedy)
-run "stage 4: MOSS annotator" "$PY_BASE" workers/stage4_moss_annotator.py "$WORKDIR"
+# Final fusion: Gemma-12B text-only (DEFAULT) or legacy MOSS-Audio annotator
+if [[ "$FUSION" == "gemma" ]]; then
+  run "stage 5: Gemma-12B text-only fusion (DEFAULT)" "$ENVS/venv_gemma/bin/python" workers/stage5_gemma_fusion.py "$WORKDIR"
+else
+  run "stage 4: MOSS-Audio annotator (legacy)" "$PY_BASE" workers/stage4_moss_annotator.py "$WORKDIR"
+fi
 
 # Report
 run "build HTML report" "$PY_BASE" build_report.py --workdir "$WORKDIR" --out "$WORKDIR/report.html"

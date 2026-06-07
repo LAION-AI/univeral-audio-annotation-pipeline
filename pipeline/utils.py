@@ -91,7 +91,7 @@ def dedup_events(events: list) -> list:
             if overlap / duration < 0.7:
                 continue
             if evt.get("type") == "speech":
-                if evt.get("transcription", "").strip() == s.get("transcription", "").strip():
+                if (evt.get("transcription") or "").strip() == (s.get("transcription") or "").strip():
                     is_dup = True
                     break
             elif evt.get("type") == "sound_event":

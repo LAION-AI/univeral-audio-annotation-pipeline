@@ -2,25 +2,30 @@
 
 Produces structured JSON annotations from any audio file, covering speech transcription, speaker diarization, emotions, vocal bursts, sound effects, and music.
 
-**Best configuration: Nemotron 3.5 words + VibeVoice/Sortformer diarization** (`nemotron_vibevoice`) — the top-scoring pipeline on [SoundScape-Bench](#evaluation-results) (Reward **0.236**), ahead of every other pipeline configuration and of Gemini 3 Flash.
+**Best configuration: Gemma-12B + DiCoW** — Nemotron 3.5 words + VibeVoice/Sortformer diarization + **DiCoW** overlap-aware ASR, fused by a **text-only Gemma-4-12B** LLM (no audio in the final step). It is the **highest-Reward pipeline on [SoundScape-Bench](#evaluation-results) (0.253)** — rank 3 of all systems, nearly matching Gemini 3.5 Flash (0.256) and ahead of every other pipeline. (It trades precision for that recall: see the [tradeoff note](#evaluation-results).)
 
 > ### ⭐ Recommended: the default pipeline
-> A turnkey, end-to-end implementation of this best configuration lives in
-> **[`default_pipeline/`](default_pipeline/)** — the **default, suggested configuration**.
-> It uses **Nemotron 3.5** for the words (what is said), **VibeVoice + Sortformer** for the
-> diarization and timing, plus the Whisper experts, the SFX LoRA sound-event detector and
-> MOSS-Audio-8B-Thinking. It adds **expressive emotion & speaking-style captions**, **detailed
-> sound-effect captions and a dedicated `music` segment type** (genre / instrumentation / tempo /
-> mood), strict diarization-only speaker identity, and explicit **singing** detection, and produces
-> per-clip JSON plus a self-contained HTML report. See **[docs/default_pipeline.md](docs/default_pipeline.md)**
-> for model weights, setup and run instructions. The legacy triple-ASR ensemble (VibeVoice +
-> Parakeet + Qwen3) is still available as an option.
+> A turnkey, end-to-end implementation lives in **[`default_pipeline/`](default_pipeline/)** — the
+> **default, suggested configuration**. It uses **Nemotron 3.5** for the words, **VibeVoice + Sortformer**
+> for diarization/timing, **pyannote + DiCoW** to transcribe overlapping speakers separately, the Whisper
+> experts and the SFX LoRA sound-event detector — all fused by a **text-only Gemma-4-12B** model (it reads
+> only the experts' outputs, not the audio). It produces **expressive emotion & speaking-style captions**,
+> **detailed sound-effect captions and a dedicated `music` segment type**, strict diarization-only speaker
+> identity, **overlapping-speech** segments, and explicit **singing** detection, plus per-clip JSON and a
+> self-contained HTML report. The legacy audio **MOSS-Audio-8B** annotator (higher precision/F1) remains
+> available via `--fusion moss`, as does the triple-ASR ensemble. See
+> **[docs/default_pipeline.md](docs/default_pipeline.md)** for models, setup and run instructions.
 >
 > ```bash
 > cd default_pipeline && bash setup_environments.sh ./envs
-> export UAAP_MOSS_SRC="$(pwd)/envs/MOSS-Audio"
-> bash run_all.sh --audio /path/to/clips --workdir ./uaap_work --envs ./envs
+> export HF_TOKEN=...        # token with gated pyannote + SFX-LoRA access accepted
+> bash run_all.sh --audio /path/to/clips --workdir ./uaap_work --envs ./envs      # --fusion gemma (default)
 > ```
+>
+> **🎧 Live demo (20 samples — audio + predictions vs ground truth):**
+> [demo](https://laion-ai.github.io/univeral-audio-annotation-pipeline/gemma12_dicow_demo.html) ·
+> **📊 Full model comparison:**
+> [comparison](https://laion-ai.github.io/univeral-audio-annotation-pipeline/soundscape_comparison.html)
 
 ### 🔗 Links
 
@@ -29,45 +34,44 @@ Produces structured JSON annotations from any audio file, covering speech transc
 
 ## Pipeline Architecture
 
-The **default configuration** pairs Nemotron 3.5 (words) with VibeVoice + Sortformer
-(diarization/timing), the Whisper voice experts, and two specialist sound-event pre-passes,
-fused by a single MOSS-Audio reasoning stage:
+The **default configuration** combines Nemotron 3.5 (words), VibeVoice + Sortformer
+(diarization/timing), pyannote + DiCoW (overlap-aware per-speaker ASR), the Whisper voice experts
+and the specialist sound-event pre-passes — all fused by a **text-only Gemma-4-12B** stage that reads
+the experts' outputs (not the audio):
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │                    INPUT: Audio File (any length)                      │
 └───────────────────────────────────┬───────────────────────────────────┘
-                                     │
-        ┌──────────────────────────┴──────────────────┐
-        ▼                                              ▼
-  ┌──────────────┐                          ┌────────────────────┐
-  │ VibeVoice    │                          │ Nemotron 3.5 ASR + │
-  │ ASR          │                          │ Sortformer         │
-  │ (diarization │                          │ (words + secondary │
-  │  & timing    │                          │  diarization)      │
-  │  authority)  │                          │                    │
-  └──────┬───────┘                          └─────────┬──────────┘
-         │   diarization / timing      words / what is said
-         └──────────────┬──────────────────────┬───────┘
-              ▼                        ▼
+        ┌──────────────┬─────────────┴───────────┬───────────────────┐
+        ▼              ▼                          ▼                   ▼
+  ┌──────────┐  ┌────────────────┐     ┌──────────────┐   ┌────────────────────┐
+  │ VibeVoice│  │ Nemotron 3.5 + │     │ pyannote     │   │ DiCoW              │
+  │ ASR      │  │ Sortformer     │     │ diarization  │──▶│ diarization-cond.  │
+  │ (diar/   │  │ (words)        │     │ + overlap    │   │ Whisper (per-spk,  │
+  │  timing) │  │                │     │ detection    │   │ overlap-aware ASR) │
+  └────┬─────┘  └───────┬────────┘     └──────┬───────┘   └─────────┬──────────┘
+       │ timing/spk     │ words               │ overlaps            │ overlapped speech
+       └────────┬───────┴─────────────┬───────┴──────────┬─────────┘
+            ▼                      ▼                  ▼
   ┌──────────────────────┐  ┌──────────────────────────────┐
   │ Whisper experts (x3) │  │ Specialist sound-event prepass│
   │ emotion · timbre ·   │  │ • SFX LoRA (MOSS-8B-Instruct  │
   │ speaking-style        │  │   + laion sfx-lora r=128)     │
   │ (per utterance)      │  │ • Vocal-burst locator @0.7    │
-  └──────────┬───────────┘  │   + sound-effect captioner    │
-             │              └───────────────┬──────────────┘
+  └──────────┬───────────┘  └───────────────┬──────────────┘
              └───────────────┬──────────────┘
                              ▼
         ┌──────────────────────────────────────────────┐
-        │            MOSS-Audio-8B-Thinking             │
+        │     Gemma-4-12B — TEXT-ONLY fusion (no audio) │
+        │  fuses all expert text → final annotation     │
         │  Nemotron words on VibeVoice timeline         │
-        │  diarization-only speakers · emotion & style  │
-        │  DETAILED sound-event + dedicated music caps  │
-        │  singing flag · full-timeline coverage hint   │
+        │  DiCoW recovers overlapping/simultaneous spk  │
+        │  detailed sound-event + dedicated music caps  │
+        │  (legacy: MOSS-Audio-8B, audio, --fusion moss)│
         └───────────────────────┬──────────────────────┘
                                 │  + deterministic gap-fill
-                                ▼     (non-speech background only)
+                                ▼
         ┌──────────────────────────────────────────────┐
         │   OUTPUT: Structured JSON (covers full clip)  │
         │   [speech · vocal_burst · sound_event · music]│
@@ -154,50 +158,55 @@ pip install -r requirements.txt
 ### Run the pipeline
 
 ```bash
-python -m pipeline.run_pipeline \
-  --audio input.wav \
-  --output output.json \
-  --config nemotron_vibevoice \
-  --gpus 0
+# DEFAULT pipeline (Gemma-12B + DiCoW, text-only fusion): use the staged runner
+cd default_pipeline
+bash run_all.sh --audio input.wav --workdir ./uaap_work --envs ./envs       # --fusion gemma (default)
 ```
+
+The default **Gemma-12B + DiCoW** configuration runs as the staged
+[`default_pipeline/`](default_pipeline/) (each stage in its own venv — llama.cpp, pyannote, DiCoW and
+the ASR toolkits pin incompatible deps, so they can't share one process). The single-process
+`pipeline/run_pipeline.py` below is a **legacy reference** for the MOSS-Audio configurations only.
 
 ### Configurations
 
-| Config | ASR (words / diarization) | Notes |
-|--------|---------------------------|-------|
-| `nemotron_vibevoice` ⭐ **default** | Nemotron 3.5 words / VibeVoice + Sortformer diarization | Best on SoundScape-Bench (Reward **0.236**); detailed sound-event + `music` captions |
-| `triple_greedy` (legacy ensemble) | VibeVoice + Parakeet + Qwen3 | Previous default; top on the older 60-scene LLM-judged eval (4.13) |
-| `ensemble_greedy` | Parakeet + Qwen3 | Dual ASR |
-| `vibevoice` | VibeVoice only | Single ASR |
+| Config | Final fusion · ASR | SoundScape-Bench Reward | Notes |
+|--------|--------------------|------------------------:|-------|
+| **Gemma-12B + DiCoW** ⭐ **default** | Gemma-4-12B *text-only* · Nemotron+VibeVoice/Sortformer + DiCoW overlap ASR | **0.253** | Best Reward of any pipeline; overlap-aware; trades precision (see eval) |
+| `nemotron_vibevoice` (MOSS, `--fusion moss`) | MOSS-Audio-8B *audio* · Nemotron+VibeVoice/Sortformer | 0.236 | Most precise (best F1/lowest hallucination); audio-grounded |
+| `triple_greedy` (legacy ensemble) | MOSS-Audio-8B · VibeVoice+Parakeet+Qwen3 | 0.196 | Top on the older 60-scene LLM-judged eval (4.13) |
+| `ensemble_greedy` / `vibevoice` | MOSS-Audio-8B · dual / single ASR | — | Reduced ASR variants |
 
-⭐ **`nemotron_vibevoice` is the default.** The turnkey
-[`default_pipeline/`](default_pipeline/) runs it with the SFX LoRA sound-event detector,
-the vocal-burst locator (threshold 0.7) + sound-effect captioner, expressive emotion &
-speaking-style captions, detailed sound-effect and dedicated `music` captions,
-diarization-only speaker identity, singing detection, and guaranteed full-timeline coverage.
-See [docs/default_pipeline.md](docs/default_pipeline.md).
+⭐ **Gemma-12B + DiCoW is the default** (`bash run_all.sh ... --fusion gemma`). It adds pyannote
+diarization + DiCoW overlap-aware ASR, then fuses every expert's *text* output with Gemma-4-12B (no
+audio in the final step) — plus the SFX LoRA detector, vocal-burst locator (0.7) + captioner, emotion/
+style captions, dedicated `music` segments, overlapping-speech segments and full-timeline coverage.
+Use `--fusion moss` for the audio MOSS-Audio-8B annotator (higher precision). See
+[docs/default_pipeline.md](docs/default_pipeline.md).
 
 ## Model Requirements
 
-| Model | HuggingFace ID | GPU VRAM |
-|-------|---------------|----------|
-| VibeVoice-ASR | `microsoft/VibeVoice-ASR` | ~16 GB |
-| Parakeet TDT v3 | `nvidia/parakeet-tdt-0.6b-v3` | ~4 GB |
-| Sortformer | `nvidia/diar_sortformer_4spk-v1` | ~2 GB |
-| Qwen3-ASR | `Qwen/Qwen3-ASR-1.7B` + `Qwen/Qwen3-ForcedAligner-0.6B` | ~8 GB |
-| Whisper experts (x3) | `laion/BUD-E-Whisper`, `laion/timbre-whisper`, `laion/voice-tagging-whisper` | ~2 GB total |
-| SFX LoRA | `OpenMOSS-Team/MOSS-Audio-8B-Instruct` + `laion/moss-audio-sfx-lora-v4` (gated) | ~18 GB |
-| Vocal-burst locator | `laion/vocalburst-locator` (threshold 0.7) | ~1 GB |
-| Sound-effect captioner | `laion/sound-effect-captioning-whisper` | ~1 GB |
-| MOSS Annotator | `OpenMOSS-Team/MOSS-Audio-8B-Thinking` | ~18 GB |
+| Model | HuggingFace ID | GPU VRAM | Role |
+|-------|---------------|----------|------|
+| VibeVoice-ASR | `microsoft/VibeVoice-ASR` | ~16 GB | diarization/timing (default) |
+| Nemotron 3.5 ASR | `nvidia/nemotron-3.5-asr-streaming-0.6b` | ~3 GB | words (default) |
+| Sortformer | `nvidia/diar_sortformer_4spk-v1` | ~2 GB | diarization (default) |
+| **pyannote** | `pyannote/speaker-diarization-3.1` (+ `segmentation-3.0`, gated) | ~2 GB | overlap detection (default) |
+| **DiCoW** | `BUT-FIT/DiCoW_v3_3` | ~3 GB | overlap-aware per-speaker ASR (default) |
+| **Gemma fuser** | `unsloth/gemma-4-12b-it-GGUF` (Q8, llama.cpp) | ~14 GB | TEXT-only final fusion (default) |
+| Whisper experts (x3) | `laion/BUD-E-Whisper`, `laion/timbre-whisper`, `laion/voice-tagging-whisper` | ~2 GB | emotion/timbre/style |
+| SFX LoRA | `OpenMOSS-Team/MOSS-Audio-8B-Instruct` + `laion/moss-audio-sfx-lora-v4` (gated) | ~18 GB | sound events |
+| Vocal-burst locator + captioner | `laion/vocalburst-locator`, `laion/sound-effect-captioning-whisper` | ~2 GB | vocal bursts |
+| Parakeet / Qwen3 | `nvidia/parakeet-tdt-0.6b-v3`, `Qwen/Qwen3-ASR-1.7B` (+aligner) | ~12 GB | legacy ensemble only |
+| MOSS Annotator | `OpenMOSS-Team/MOSS-Audio-8B-Thinking` | ~18 GB | legacy final stage (`--fusion moss`) |
 
-The default `nemotron_vibevoice` config drops Parakeet and Qwen3 (using Nemotron 3.5 +
-Sortformer for words instead), so it is **lighter** than the legacy triple ensemble: it needs
-VibeVoice (~16 GB) + Nemotron 3.5/Sortformer (~5 GB) + Whisper experts + SFX LoRA + MOSS,
-loaded/unloaded sequentially. With multi-GPU, components can run in parallel on separate GPUs.
+Models load/unload sequentially (each stage in its own venv), so peak VRAM ≈ the largest single stage
+(~16–18 GB); the default runs comfortably on one 24 GB GPU, faster on two.
 
-> The SFX LoRA `laion/moss-audio-sfx-lora-v4` is gated — request access and `huggingface-cli login`,
-> or run with `--no-sfx`. Full model table with links: [docs/default_pipeline.md](docs/default_pipeline.md).
+> **Gated models** (request access, then `export HF_TOKEN=...`): `pyannote/segmentation-3.0`,
+> `pyannote/speaker-diarization-3.1`, and `laion/moss-audio-sfx-lora-v4` (or run `--no-sfx`).
+> The Gemma GGUF downloads automatically. Full model table with links:
+> [docs/default_pipeline.md](docs/default_pipeline.md).
 
 ## Evaluation Results
 
@@ -208,20 +217,32 @@ held-out soundscapes (EN/ZH/FR/DE/ES/NL, ~25 % overlapping speech) built from un
 every event has an exact answer key. The headline **Reward** = IoU(timing) × content, where content is
 a weighted mix of caption cosine and (1 − WER) for speech, averaged over all answer-key events.
 
-| # | System | Reward | IoU | F1 | WER | sound/music cos |
-|---|--------|--------|-----|-----|-----|-----------------|
-| 1 | Gemini 3.1 Pro (omni) | 0.297 | 0.615 | 0.270 | 72 % | 0.385 |
-| 2 | Gemini 3.5 Flash (omni) | 0.256 | 0.556 | 0.233 | 67 % | 0.310 |
-| 3 | **UAAP `nemotron_vibevoice` ⭐ (this default)** | **0.236** | 0.457 | 0.191 | 65 % | 0.287 |
-| 4 | Gemini 3 Flash (omni) | 0.212 | 0.450 | 0.172 | 66 % | 0.262 |
-| 5 | UAAP triple-ASR ensemble (legacy default) | 0.196 | 0.388 | 0.145 | 66 % | 0.226 |
-| 6 | UAAP Sortformer + Nemotron 3.5 (no VibeVoice diar) | 0.153 | 0.331 | 0.112 | 59 % | 0.223 |
-| 7 | GPT-Audio 1.5 (omni) | 0.097 | 0.223 | 0.097 | 61 % | 0.152 |
+| # | System | Reward | IoU | F1 | WER | snd | halluc |
+|---|--------|-------:|----:|---:|----:|----:|-------:|
+| 1 | Gemini 3.1 Pro (omni) | 0.297 | 0.615 | 0.270 | 72 % | 0.385 | 23 % |
+| 2 | Gemini 3.5 Flash (omni) | 0.256 | 0.556 | 0.233 | 67 % | 0.310 | 23 % |
+| 3 | **UAAP Gemma-12B + DiCoW ⭐ (this default, text-only fusion)** | **0.253** | 0.515 | 0.149 | 59 % | 0.273 | 43 % |
+| 4 | UAAP Gemma-12B (text-only, no DiCoW) | 0.248 | 0.512 | 0.144 | 56 % | 0.278 | 44 % |
+| 5 | UAAP Gemma-4B + DiCoW (text-only) | 0.244 | 0.490 | 0.151 | 59 % | 0.269 | 44 % |
+| 6 | UAAP `nemotron_vibevoice` (MOSS-Audio-8B, `--fusion moss`) | 0.236 | 0.457 | **0.191** | 65 % | 0.287 | **27 %** |
+| 7 | Gemini 3 Flash (omni) | 0.212 | 0.450 | 0.172 | 66 % | 0.262 | 33 % |
+| 8 | UAAP triple-ASR ensemble (legacy) | 0.196 | 0.388 | 0.145 | 66 % | 0.226 | 32 % |
+| 9 | GPT-Audio 1.5 (omni) | 0.097 | 0.223 | 0.097 | 61 % | 0.152 | 36 % |
 
-The default pipeline is the **strongest non-Gemini system and the best UAAP configuration** — it beats
-the legacy triple ensemble by +20 % Reward and edges out Gemini 3 Flash. Two changes drive the gain:
-emitting a dedicated **`music`** type (the legacy configs emit `0` music events, so every music answer
-scored zero) and asking MOSS for **detailed sound-effect captions**.
+The default **Gemma-12B + DiCoW** is the **highest-Reward pipeline of all** (rank 3 overall, nearly
+matching Gemini 3.5 Flash and well above the audio MOSS configs). A *text-only* LLM that faithfully
+fuses strong experts wins on **timing (IoU) and transcription (WER)**, and **DiCoW** recovers
+overlapping/simultaneous speakers (cleanly separating e.g. an English and a Mandarin speaker talking
+at once).
+
+> **⚖️ Precision tradeoff (read before deploying):** because the Gemma fuser has **no audio**, it
+> cannot *reject* candidate events it can't hear, so it over-generates — **hallucination ~43 % and
+> F1 ~0.15**, versus the audio **MOSS-Audio-8B** config's **27 % / 0.191**. If you need maximum
+> precision / fewest spurious events, run `--fusion moss`. The default optimizes the recall-oriented
+> Reward at lower cost (a ~12B text model, no audio in the final step).
+
+📊 **Interactive comparison:** [soundscape_comparison.html](https://laion-ai.github.io/univeral-audio-annotation-pipeline/soundscape_comparison.html)
+· 🎧 **20-sample audio demo (predictions vs ground truth):** [gemma12_dicow_demo.html](https://laion-ai.github.io/univeral-audio-annotation-pipeline/gemma12_dicow_demo.html)
 
 ### Legacy LLM-judged eval (60 scenes, Gemini 3.1 Pro, 0–5 scale)
 
@@ -251,25 +272,31 @@ default_pipeline/        # ⭐ Default recommended configuration (turnkey script
   prepare_audio.py       # Stage 0: decode + index
   workers/               # One script per stage:
     stage1a_vibevoice.py #   VibeVoice-ASR (diarization / timing authority)
-    stage1_nemotron_sortformer.py #  ⭐ Nemotron 3.5 + Sortformer (default word source)
+    stage1_nemotron_sortformer.py #  Nemotron 3.5 + Sortformer (default word source)
+    stage_pyannote_diar.py #  ⭐ pyannote diarization + overlap detection (default)
+    stage_dicow.py       #   ⭐ DiCoW diarization-conditioned overlap ASR (default)
+    stage5_gemma_fusion.py #  ⭐ Gemma-12B TEXT-only fusion — DEFAULT final stage
     stage1b_parakeet.py  #   Parakeet TDT v3 + Sortformer (legacy ensemble option)
     stage1c_qwen3.py     #   Qwen3-ASR + ForcedAligner (legacy ensemble option)
     stage2_whisper_experts.py  # emotion/timbre/style
     stage3_sfx_lora.py   #   SFX LoRA sound events
     stage3b_vocalburst.py#   Vocal-burst locator + captioner
-    stage4_moss_annotator.py   # MOSS final annotation (greedy; auto-detects ASR JSONs)
+    stage4_moss_annotator.py   # MOSS-Audio final annotation (legacy, --fusion moss)
   build_report.py        # Self-contained HTML report
 
 pipeline/
-  run_pipeline.py        # Main entry point (single-process reference implementation)
+  run_pipeline.py        # Single-process reference runner (MOSS configs only)
   asr_vibevoice.py       # VibeVoice-ASR component
-  asr_nemotron.py        # ⭐ Nemotron 3.5 + Sortformer (default word source)
+  asr_nemotron.py        # Nemotron 3.5 + Sortformer (default word source)
+  diarize_pyannote.py    # ⭐ pyannote diarization + overlap detection
+  asr_dicow.py           # ⭐ DiCoW diarization-conditioned overlap ASR
+  gemma_fusion.py        # ⭐ Gemma text-only LLM fusion (default final stage)
   asr_parakeet.py        # Parakeet TDT v3 + Sortformer (legacy ensemble option)
   asr_qwen3.py           # Qwen3-ASR-1.7B + ForcedAligner (legacy ensemble option)
   whisper_experts.py     # Emotion/timbre/style Whisper models
   sfx_lora.py            # LoRA SFX sound event detection
   vocalburst_locator.py  # Vocal-burst locator + sound-effect captioner
-  moss_annotator.py      # MOSS-Audio-8B-Thinking annotation (customized prompt)
+  moss_annotator.py      # MOSS-Audio-8B-Thinking annotation (legacy final stage)
   utils.py               # Shared utilities (incl. full-timeline gap-fill)
 
 evaluation/
