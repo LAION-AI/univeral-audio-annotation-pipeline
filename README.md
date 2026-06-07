@@ -21,6 +21,9 @@ Produces structured JSON annotations from any audio file, covering speech transc
 > export HF_TOKEN=...        # token with gated pyannote + SFX-LoRA access accepted
 > bash run_all.sh --audio /path/to/clips --workdir ./uaap_work --envs ./envs      # --fusion gemma (default)
 > ```
+> ⚡ With ≥2 GPUs the heavy stages (Gemma fusion, SFX, ASR…) are **auto-sharded across GPUs over
+> disjoint clips** (≈N× faster, identical output; `--gpus 0,1`). Optional quality-neutral lower-VRAM
+> fuser: `export GEMMA_FILE=gemma-4-12b-it-UD-Q6_K_XL.gguf`. See [efficiency notes](default_pipeline/README.md#performance--efficiency).
 >
 > **🎧 Live demo (20 samples — audio + predictions vs ground truth):**
 > [demo](https://laion-ai.github.io/univeral-audio-annotation-pipeline/gemma12_dicow_demo.html) ·

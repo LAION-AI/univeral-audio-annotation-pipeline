@@ -70,7 +70,16 @@ def get_workdir() -> Path:
 
 
 def load_index(workdir: Path) -> list:
-    return json.loads((workdir / "index.json").read_text())
+    """Load the clip index. Honors $UAAP_SHARD="i/n" for data-parallel runs: a worker launched
+    with UAAP_SHARD=0/2 processes clips index[0::2], 1/2 processes index[1::2], etc. This lets the
+    same single-GPU stage run on several GPUs at once over disjoint clip subsets (≈N× throughput,
+    identical per-clip output)."""
+    idx = json.loads((workdir / "index.json").read_text())
+    shard = os.environ.get("UAAP_SHARD", "")
+    if shard:
+        i, n = (int(x) for x in shard.split("/"))
+        idx = idx[i::n]
+    return idx
 
 
 def load_json(path) -> list:

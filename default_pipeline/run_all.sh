@@ -24,6 +24,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --envs) ENVS="$2"; shift 2;;
   --no-sfx) SFX=0; shift;;
   --fusion) FUSION="$2"; shift 2;;
+  --gpus) GPUS="$2"; shift 2;;
   *) echo "unknown arg $1"; exit 1;;
 esac; done
 [[ -n "$AUDIO" ]] || { echo "need --audio"; exit 1; }
@@ -31,7 +32,24 @@ esac; done
 cd "$HERE"
 export PYTHONPATH="$HERE/workers:${PYTHONPATH:-}"
 PY_BASE="$ENVS/venv/bin/python"
-run () { echo; echo ">>> $1"; shift; "$@"; }
+
+# GPUs to use (default: all visible). Single-GPU stages are DATA-PARALLEL sharded across them
+# (disjoint clips, identical per-clip output → ≈N× throughput on the heavy fusion/SFX/ASR stages).
+GPUS="${GPUS:-$(nvidia-smi -L 2>/dev/null | wc -l)}"; GPUS="${GPUS:-1}"
+IFS=',' read -ra GPU_ARR <<< "$([[ "$GPUS" =~ , ]] && echo "$GPUS" || seq -s, 0 $((GPUS-1)))"
+NGPU="${#GPU_ARR[@]}"
+echo "Using $NGPU GPU(s): ${GPU_ARR[*]}"
+
+run () { echo; echo ">>> $1"; shift; "$@"; }      # one stage, as-is (e.g. VibeVoice uses all GPUs)
+runp () {                                          # one single-GPU stage, sharded across GPUs
+  echo; echo ">>> $1 (sharded ×$NGPU)"; shift; local py="$1" wk="$2"
+  if [[ "$NGPU" -le 1 ]]; then "$py" "$wk" "$WORKDIR"; return; fi
+  local pids=() i
+  for i in "${!GPU_ARR[@]}"; do
+    CUDA_VISIBLE_DEVICES="${GPU_ARR[$i]}" UAAP_SHARD="$i/$NGPU" "$py" "$wk" "$WORKDIR" & pids+=($!)
+  done
+  wait "${pids[@]}"
+}
 
 # Stage 0: decode to canonical wav + build index.json
 run "stage 0: prepare audio" "$PY_BASE" prepare_audio.py --audio "$AUDIO" --workdir "$WORKDIR"
@@ -40,29 +58,30 @@ run "stage 0: prepare audio" "$PY_BASE" prepare_audio.py --audio "$AUDIO" --work
 #   VibeVoice provides the diarization / timing authority; Nemotron 3.5 + Sortformer provide the words.
 #   The legacy triple-ASR ensemble (stage1b_parakeet.py + stage1c_qwen3.py) is still available — the
 #   stage-4 worker auto-detects which ASR JSONs are present. See docs/default_pipeline.md.
+# VibeVoice-ASR (~23 GB) shards its OWN model across all GPUs, so run it whole (not clip-sharded).
 run "stage 1a: VibeVoice-ASR (diarization/timing)" "$ENVS/venv_vv/bin/python" workers/stage1a_vibevoice.py "$WORKDIR"
-run "stage 1: Nemotron 3.5 + Sortformer (words)"   "$ENVS/venv_nemo/bin/python" workers/stage1_nemotron_sortformer.py "$WORKDIR"
+runp "stage 1: Nemotron 3.5 + Sortformer (words)"  "$ENVS/venv_nemo/bin/python" workers/stage1_nemotron_sortformer.py
 
 # Stage 1d/1e (default gemma fusion only): pyannote diarization+overlap, then DiCoW overlap-aware ASR
 if [[ "$FUSION" == "gemma" ]]; then
-  run "stage 1d: pyannote diarization + overlap" "$ENVS/venv_pyannote/bin/python" workers/stage_pyannote_diar.py "$WORKDIR"
-  run "stage 1e: DiCoW overlap-aware ASR"        "$ENVS/venv_dicow/bin/python"    workers/stage_dicow.py "$WORKDIR"
+  runp "stage 1d: pyannote diarization + overlap" "$ENVS/venv_pyannote/bin/python" workers/stage_pyannote_diar.py
+  runp "stage 1e: DiCoW overlap-aware ASR"        "$ENVS/venv_dicow/bin/python"    workers/stage_dicow.py
 fi
 
 # Stage 2: Whisper experts
-run "stage 2: Whisper experts" "$PY_BASE" workers/stage2_whisper_experts.py "$WORKDIR"
+runp "stage 2: Whisper experts" "$PY_BASE" workers/stage2_whisper_experts.py
 
 # Stage 3: SFX LoRA (optional) + vocal-burst candidate pre-pass
 if [[ "$SFX" == "1" ]]; then
-  run "stage 3: SFX LoRA" "$PY_BASE" workers/stage3_sfx_lora.py "$WORKDIR"
+  runp "stage 3: SFX LoRA" "$PY_BASE" workers/stage3_sfx_lora.py
 fi
-run "stage 3b: vocal-burst candidates" "$PY_BASE" workers/stage3b_vocalburst.py "$WORKDIR"
+runp "stage 3b: vocal-burst candidates" "$PY_BASE" workers/stage3b_vocalburst.py
 
 # Final fusion: Gemma-12B text-only (DEFAULT) or legacy MOSS-Audio annotator
 if [[ "$FUSION" == "gemma" ]]; then
-  run "stage 5: Gemma-12B text-only fusion (DEFAULT)" "$ENVS/venv_gemma/bin/python" workers/stage5_gemma_fusion.py "$WORKDIR"
+  runp "stage 5: Gemma-12B text-only fusion (DEFAULT)" "$ENVS/venv_gemma/bin/python" workers/stage5_gemma_fusion.py
 else
-  run "stage 4: MOSS-Audio annotator (legacy)" "$PY_BASE" workers/stage4_moss_annotator.py "$WORKDIR"
+  runp "stage 4: MOSS-Audio annotator (legacy)" "$PY_BASE" workers/stage4_moss_annotator.py
 fi
 
 # Report

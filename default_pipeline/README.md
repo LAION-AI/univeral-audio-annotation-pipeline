@@ -31,6 +31,22 @@ bash run_all.sh --audio /path/to/clips --workdir ./uaap_work --envs ./envs   # -
 Results: `<audio>_pred.json` next to each input, all intermediates in `uaap_work/<stem>/`,
 and `uaap_work/report.html`.
 
+## Performance & efficiency
+
+Profiling shows two stages dominate: the **Gemma fusion (~30 s/clip)** and **VibeVoice (~15 s/clip)**;
+every other stage is < 1.5 s/clip.
+
+- **GPU data-parallel sharding (automatic).** With ≥2 GPUs, each single-GPU stage (Nemotron, pyannote,
+  DiCoW, Whisper, SFX-LoRA, **Gemma fusion**, MOSS) is split across GPUs over disjoint clips
+  (`$UAAP_SHARD`), giving **≈N× throughput with bit-identical per-clip output** (greedy decoding is
+  deterministic). VibeVoice already shards its own 23 GB model across GPUs, so it runs whole. Override
+  with `--gpus 0,1` (or `--gpus 0` to disable). This roughly **halves end-to-end time on 2 GPUs**.
+- **Faster fuser quant (optional, quality-neutral).** `gemma-4-12b-it-UD-Q6_K_XL` matched Q8 Reward on a
+  60-clip check (0.206 vs 0.198) while using ~23 % less VRAM and running a bit faster:
+  `export GEMMA_FILE=gemma-4-12b-it-UD-Q6_K_XL.gguf`.
+- **Why VibeVoice is kept:** dropping it (using Sortformer-only timing) *lowered* Reward/F1 in testing,
+  so it stays — the speedups above are quality-preserving by construction, not model removals.
+
 ## Files
 
 | File | Purpose |
