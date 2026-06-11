@@ -49,23 +49,49 @@ details{margin-top:12px}summary{cursor:pointer;color:var(--mut);font-size:13px}.
 EXPLAIN = """<div class="card">
 <h2>How this pipeline works (default configuration)</h2>
 <ol>
-<li><b>Three independent ASR systems</b> transcribe each clip and are reconciled by majority vote:
-<b>VibeVoice-ASR</b> (built-in diarization), <b>Parakeet TDT v3</b> + <b>Sortformer</b>, and
-<b>Qwen3-ASR-1.7B</b> + ForcedAligner.</li>
+<li><b>VibeVoice-ASR</b> provides the speaker <b>diarization &amp; timing</b> authority (who speaks when).</li>
+<li><b>Nemotron 3.5 + Sortformer</b> provide the <b>words</b> (what is said), Sortformer-diarized.</li>
+<li><b>pyannote</b> (segmentation-3.0) adds <b>overlap detection</b>, and <b>DiCoW</b> — a
+diarization-conditioned Whisper — transcribes <b>each speaker separately</b> through overlapping speech,
+recovering simultaneous voices the single-pass ASR garbles.</li>
 <li><b>Whisper experts</b> tag each utterance with raw emotion / timbre / speaking-style.</li>
-<li><b>SFX LoRA</b> (MOSS-Audio-8B-Instruct + laion/moss-audio-sfx-lora-v4) proposes timestamped sound events.</li>
-<li><b>Vocal-burst pre-pass</b> (laion/vocalburst-locator @ 0.7 + laion/sound-effect-captioning-whisper)
-proposes extra candidate sound effects for MOSS to verify.</li>
-<li><b>MOSS-Audio-8B-Thinking</b> listens to the audio with all the above context and writes the final
-structured annotation. Decoding is <b>greedy</b>.</li>
+<li><b>SFX LoRA</b> (MOSS-Audio-8B-Instruct + laion/moss-audio-sfx-lora-v4) proposes timestamped sound
+events; a <b>vocal-burst pre-pass</b> (laion/vocalburst-locator @ 0.7 + laion/sound-effect-captioning-whisper)
+proposes extra candidate sound effects.</li>
+<li><b>Gemma-4-12B</b> performs a <b>text-only fusion</b>: it reads <i>only</i> the experts' text outputs
+(no audio) and writes the final structured annotation &mdash; Nemotron words on the VibeVoice timeline,
+DiCoW-recovered overlapping speakers, detailed sound-event captions and a dedicated <code>music</code>
+type. Decoding is <b>greedy</b>. <span style="opacity:.8">(The legacy audio MOSS-Audio-8B annotator is
+still available via <code>--fusion moss</code>.)</span></li>
 </ol>
+<pre style="background:#0c1014;border:1px solid #2a313c;border-radius:8px;padding:12px;overflow-x:auto;font-size:11.5px;line-height:1.3;color:#bcd">
+INPUT: Audio File
+   |          |              |                   |
+   v          v              v                   v
+ VibeVoice  Nemotron3.5+   pyannote diar  -->  DiCoW (diarization-conditioned
+ (diar/     Sortformer     + overlap           Whisper: per-speaker,
+  timing)   (words)        detection           overlap-aware ASR)
+   |timing/spk |words         |overlaps          |overlapped speech
+   +-----------+--------+------+--------+---------+
+                 v               v
+       Whisper experts x3    Specialist sound-event prepass
+       emotion/timbre/style  (SFX LoRA + vocal-burst locator)
+                 +------+--------+
+                        v
+       Gemma-4-12B  --  TEXT-ONLY fusion (no audio)
+       fuses all expert text -> final annotation
+       (legacy: MOSS-Audio-8B audio, --fusion moss)
+                        |  + deterministic gap-fill
+                        v
+       OUTPUT: Structured JSON (covers full clip)
+       [speech . vocal_burst . sound_event . music]
+</pre>
 <p class="note"><b>Expressive captions:</b> <i>emotion</i> and <i>speaking_style</i> are short, precise
 captions (EmoNet vocabulary, intensity modifiers, emotion blends), not single labels. Speaker count comes
-only from the diarization (VibeVoice first, Sortformer fallback) — sound-event captions never create
-speakers. Singing is flagged explicitly under <i>speaking_style</i>. The three ASR transcripts vote on the
-words (two outvote one; single-ASR content is still kept). The annotation covers the <b>full timeline</b>:
-any span MOSS leaves uncovered is filled from the SFX predictions (or marked silence) and shown as
-<span class="tag fill">timeline fill</span>.</p>
+only from the diarization (VibeVoice authority; Sortformer/pyannote secondary) — sound-event captions never
+create speakers. Singing is flagged explicitly under <i>speaking_style</i>. Overlapping/simultaneous
+speakers are recovered by DiCoW. The annotation covers the <b>full timeline</b>: any uncovered span is
+filled from the SFX predictions (or marked silence) and shown as <span class="tag fill">timeline fill</span>.</p>
 </div>"""
 
 
@@ -141,7 +167,8 @@ def main():
     doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
            f'<title>{esc(args.title)}</title>{CSS}</head><body><div class="wrap">'
-           f'<h1>{esc(args.title)}</h1><p class="sub">Triple-ASR ensemble &middot; greedy decoding '
+           f'<h1>{esc(args.title)}</h1><p class="sub">Nemotron 3.5 + VibeVoice/Sortformer + pyannote/DiCoW '
+           f'&middot; Gemma-4-12B text-only fusion &middot; greedy decoding '
            f'&middot; expressive emotion &amp; speaking-style captions</p>{EXPLAIN}'
            f'{"".join(cards)}<p class="meta">Generated from {len(index)} clip(s).</p></div></body></html>')
     Path(args.out).write_text(doc, encoding="utf-8")
