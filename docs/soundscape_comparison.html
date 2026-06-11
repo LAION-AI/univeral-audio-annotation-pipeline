@@ -127,7 +127,15 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>67%</td><td>0.264</td><td>0.310</td>
       <td>98%</td><td>23%</td>
       <td>5.2 / 4.0</td></tr><tr>
-      <td>3. Gemma-4-12B TEXT-only fusion (EXP2 + DiCoW experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only 12B LLM fusion, no audio)</span></td>
+      <td>3. Gemma-4-12B + DiCoW — fixed prompt (ASR-anchored speech timestamps + empty-speech filter) <span class=note2>(current default pipeline (fixed Gemma prompt))</span></td>
+      <td><b>0.255</b></td>
+      <td>0.264</td>
+      <td>0.516</td>
+      <td>0.147</td><td>0.243</td>
+      <td>61%</td><td>0.310</td><td>0.271</td>
+      <td>87%</td><td>45%</td>
+      <td>9.5 / 4.0</td></tr><tr>
+      <td>4. Gemma-4-12B TEXT-only fusion (EXP2 + DiCoW experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only 12B LLM fusion, no audio)</span></td>
       <td><b>0.253</b></td>
       <td>0.262</td>
       <td>0.515</td>
@@ -135,7 +143,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>59%</td><td>0.313</td><td>0.273</td>
       <td>82%</td><td>43%</td>
       <td>9.2 / 4.0</td></tr><tr>
-      <td>4. Gemma-4-12B TEXT-only fusion (EXP2 experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only 12B LLM fusion, no audio)</span></td>
+      <td>5. Gemma-4-12B TEXT-only fusion (EXP2 experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only 12B LLM fusion, no audio)</span></td>
       <td><b>0.248</b></td>
       <td>0.259</td>
       <td>0.512</td>
@@ -143,7 +151,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>56%</td><td>0.313</td><td>0.278</td>
       <td>82%</td><td>44%</td>
       <td>9.4 / 4.0</td></tr><tr>
-      <td>5. Gemma-4-E4B TEXT-only fusion (EXP2 + DiCoW experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only LLM fusion, no audio)</span></td>
+      <td>6. Gemma-4-E4B TEXT-only fusion (EXP2 + DiCoW experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only LLM fusion, no audio)</span></td>
       <td><b>0.244</b></td>
       <td>0.253</td>
       <td>0.490</td>
@@ -151,7 +159,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>59%</td><td>0.319</td><td>0.269</td>
       <td>86%</td><td>44%</td>
       <td>8.5 / 4.0</td></tr><tr>
-      <td>6. Gemma-4-E4B TEXT-only fusion (EXP2 experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only LLM fusion, no audio)</span></td>
+      <td>7. Gemma-4-E4B TEXT-only fusion (EXP2 experts, NO audio) — replaces MOSS-8B <span class=note2>(experimental — text-only LLM fusion, no audio)</span></td>
       <td><b>0.237</b></td>
       <td>0.247</td>
       <td>0.479</td>
@@ -159,7 +167,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>59%</td><td>0.316</td><td>0.266</td>
       <td>86%</td><td>44%</td>
       <td>8.7 / 4.0</td></tr><tr>
-      <td>7. UAAP EXP2 — VibeVoice+Sortformer diarization + Nemotron 3.5 words + detailed SFX/music captions (→ MOSS-8B) <span class=note2>(experimental configuration — not the standard pipeline)</span></td>
+      <td>8. UAAP EXP2 — VibeVoice+Sortformer diarization + Nemotron 3.5 words + detailed SFX/music captions (→ MOSS-8B) <span class=note2>(experimental configuration — not the standard pipeline)</span></td>
       <td><b>0.236</b></td>
       <td>0.241</td>
       <td>0.457</td>
@@ -167,7 +175,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>65%</td><td>0.300</td><td>0.287</td>
       <td>91%</td><td>27%</td>
       <td>5.6 / 4.0</td></tr><tr>
-      <td>8. Combo A — EXP2 + DiCoW overlap-aware ASR (diarization-conditioned Whisper) <span class=note2>(experimental — EXP2 + new model)</span></td>
+      <td>9. Combo A — EXP2 + DiCoW overlap-aware ASR (diarization-conditioned Whisper) <span class=note2>(experimental — EXP2 + new model)</span></td>
       <td><b>0.233</b></td>
       <td>0.237</td>
       <td>0.453</td>
@@ -175,7 +183,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>67%</td><td>0.299</td><td>0.271</td>
       <td>93%</td><td>28%</td>
       <td>5.8 / 4.0</td></tr><tr>
-      <td>9. Combo D — EXP2 + DiCoW + PretrainedSED + PANNs (full stack) <span class=note2>(experimental — EXP2 + new models)</span></td>
+      <td>10. Combo D — EXP2 + DiCoW + PretrainedSED + PANNs (full stack) <span class=note2>(experimental — EXP2 + new models)</span></td>
       <td><b>0.229</b></td>
       <td>0.233</td>
       <td>0.442</td>
@@ -183,7 +191,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>67%</td><td>0.296</td><td>0.249</td>
       <td>96%</td><td>30%</td>
       <td>6.4 / 4.0</td></tr><tr>
-      <td>10. Combo C — EXP2 + PretrainedSED + PANNs music gate <span class=note2>(experimental — EXP2 + new models)</span></td>
+      <td>11. Combo C — EXP2 + PretrainedSED + PANNs music gate <span class=note2>(experimental — EXP2 + new models)</span></td>
       <td><b>0.226</b></td>
       <td>0.234</td>
       <td>0.446</td>
@@ -191,7 +199,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>65%</td><td>0.294</td><td>0.269</td>
       <td>94%</td><td>28%</td>
       <td>5.6 / 4.0</td></tr><tr>
-      <td>11. Combo B — EXP2 + PretrainedSED strong-label sound events <span class=note2>(experimental — EXP2 + new model)</span></td>
+      <td>12. Combo B — EXP2 + PretrainedSED strong-label sound events <span class=note2>(experimental — EXP2 + new model)</span></td>
       <td><b>0.222</b></td>
       <td>0.229</td>
       <td>0.435</td>
@@ -199,7 +207,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>65%</td><td>0.302</td><td>0.250</td>
       <td>94%</td><td>28%</td>
       <td>5.9 / 4.0</td></tr><tr>
-      <td>12. Gemini 3 Flash (omni)</td>
+      <td>13. Gemini 3 Flash (omni)</td>
       <td><b>0.212</b></td>
       <td>0.217</td>
       <td>0.450</td>
@@ -207,7 +215,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>66%</td><td>0.255</td><td>0.262</td>
       <td>98%</td><td>33%</td>
       <td>6.6 / 4.0</td></tr><tr>
-      <td>13. UAAP EXP3 — pyannote diarization+overlap detection + Nemotron 3.5 (full + overlap-targeted re-ASR) + detailed SFX/music (→ MOSS-8B) <span class=note2>(experimental configuration — not the standard pipeline)</span></td>
+      <td>14. UAAP EXP3 — pyannote diarization+overlap detection + Nemotron 3.5 (full + overlap-targeted re-ASR) + detailed SFX/music (→ MOSS-8B) <span class=note2>(experimental configuration — not the standard pipeline)</span></td>
       <td><b>0.206</b></td>
       <td>0.212</td>
       <td>0.429</td>
@@ -215,7 +223,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>56%</td><td>0.293</td><td>0.250</td>
       <td>97%</td><td>40%</td>
       <td>9.2 / 4.0</td></tr><tr>
-      <td>14. UAAP pipeline — triple-ASR ensemble (VibeVoice + Parakeet + Qwen3 → MOSS-8B)</td>
+      <td>15. UAAP pipeline — triple-ASR ensemble (VibeVoice + Parakeet + Qwen3 → MOSS-8B)</td>
       <td><b>0.196</b></td>
       <td>0.200</td>
       <td>0.388</td>
@@ -223,7 +231,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>66%</td><td>0.296</td><td>0.226</td>
       <td>93%</td><td>32%</td>
       <td>6.5 / 4.0</td></tr><tr>
-      <td>15. UAAP EXP1 — VibeVoice diarization + Parakeet/Nemotron 3.5 wording + dual-caption SFX (→ MOSS-8B) <span class=note2>(experimental configuration — not the standard pipeline)</span></td>
+      <td>16. UAAP EXP1 — VibeVoice diarization + Parakeet/Nemotron 3.5 wording + dual-caption SFX (→ MOSS-8B) <span class=note2>(experimental configuration — not the standard pipeline)</span></td>
       <td><b>0.190</b></td>
       <td>0.195</td>
       <td>0.383</td>
@@ -231,7 +239,7 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>67%</td><td>0.295</td><td>0.195</td>
       <td>94%</td><td>29%</td>
       <td>6.1 / 4.0</td></tr><tr>
-      <td>16. UAAP pipeline — Sortformer + Nemotron 3.5 ASR (→ MOSS-8B)</td>
+      <td>17. UAAP pipeline — Sortformer + Nemotron 3.5 ASR (→ MOSS-8B)</td>
       <td><b>0.153</b></td>
       <td>0.162</td>
       <td>0.331</td>
@@ -239,14 +247,38 @@ with a worked JSON example) and the model returns the annotation in one shot.</l
       <td>59%</td><td>0.296</td><td>0.223</td>
       <td>96%</td><td>35%</td>
       <td>6.5 / 4.0</td></tr><tr>
-      <td>17. GPT-Audio 1.5 (omni)</td>
+      <td>18. GPT-Audio 1.5 (omni)</td>
       <td><b>0.097</b></td>
       <td>0.104</td>
       <td>0.223</td>
       <td>0.097</td><td>0.106</td>
       <td>61%</td><td>0.251</td><td>0.152</td>
       <td>98%</td><td>36%</td>
-      <td>4.5 / 4.0</td></tr>
+      <td>4.5 / 4.0</td></tr><tr>
+      <td>19. fast_q6_vv</td>
+      <td><b>0.062</b></td>
+      <td>0.065</td>
+      <td>0.133</td>
+      <td>0.051</td><td>0.070</td>
+      <td>55%</td><td>0.309</td><td>0.271</td>
+      <td>86%</td><td>18%</td>
+      <td>3.2 / 4.0</td></tr><tr>
+      <td>20. fast_q6_novv</td>
+      <td><b>0.058</b></td>
+      <td>0.060</td>
+      <td>0.123</td>
+      <td>0.046</td><td>0.067</td>
+      <td>52%</td><td>0.302</td><td>0.278</td>
+      <td>95%</td><td>19%</td>
+      <td>3.3 / 4.0</td></tr><tr>
+      <td>21. fast_q8_novv</td>
+      <td><b>0.058</b></td>
+      <td>0.060</td>
+      <td>0.123</td>
+      <td>0.046</td><td>0.067</td>
+      <td>52%</td><td>0.299</td><td>0.293</td>
+      <td>95%</td><td>19%</td>
+      <td>3.4 / 4.0</td></tr>
 </table>
 <p class=note><b>Ranked by Reward</b> (the headline score, explained above): weighted <code>IoU×cos</code> +
 <code>IoU×(1−WER)</code>, so timing, description <i>and</i> transcription accuracy all count. <b>F1</b> is the stricter all-or-nothing
