@@ -27,11 +27,23 @@ outputs; do not invent events no expert reported, and never drop speech the ASR 
 
 ## FUSION RULES (no audio — rely on the experts)
 - Speech: use the Nemotron 3.5 wording; place it on the VibeVoice timeline/speakers (see SPEAKER RULE).
+- ⚠️ SPEECH TIMESTAMPS — READ CAREFULLY. Each `speech` segment's `start_time` and `end_time` MUST be taken
+  from the **ASR / diarization timestamps** — i.e. the per-utterance `[start s - end s]` ranges given in the
+  ASR sources (VibeVoice and the Nemotron word-level ASR), and the DiCoW per-speaker turns. Use ONE speech
+  segment per ASR utterance, with exactly that utterance's start/end. **NEVER take a speech segment's timing
+  from the "Sound Event / Music caption windows" (the SFX-LoRA predictions)** — those windows are sound
+  events, not speech, and their spans must NOT become speech boundaries. If an ASR utterance has no
+  timestamp, estimate it from the surrounding utterances, never from an SFX window.
+- Do NOT emit a `speech` segment with an empty/blank transcription. Do NOT duplicate the same utterance as
+  two segments, and do NOT make two different utterances share identical start/end times unless they are
+  genuinely overlapping speech from DIFFERENT speakers.
 - OVERLAPPING speech: when the DiCoW per-speaker transcripts show a speaker saying something (especially
   a DIFFERENT language) that the full-clip Nemotron pass missed, emit it as its OWN `speech` segment
-  overlapping in time with the other speaker — two simultaneous voices = TWO speech segments.
-- Sound events / music: turn the SFX-LoRA caption windows into sound_event entries; emit a `music`
-  segment (not sound_event) whenever a caption describes music, with a detailed description.
+  overlapping in time with the other speaker — two simultaneous voices = TWO speech segments (each with its
+  own ASR timestamps).
+- Sound events / music: turn the SFX-LoRA caption windows into sound_event entries (THESE windows supply the
+  timing for sound_event/`music` ONLY); emit a `music` segment (not sound_event) whenever a caption
+  describes music, with a detailed description.
 - Vocal bursts: use the specialist detections when present. Emotion/style: from the voice analysis.
 - Cover the full timeline ({duration:.1f}s); fill gaps with a quiet room-tone sound_event.
 
@@ -106,4 +118,8 @@ class GemmaFuser:
         r = self.llm.create_chat_completion(
             messages=[{"role": "user", "content": prompt}], temperature=0.0, max_tokens=max_tokens)
         ann = dedup_events(extract_json(r["choices"][0]["message"]["content"]) or [])
+        # Drop phantom speech segments with no words (these come from the model copying an SFX-LoRA
+        # window's span as if it were speech). A speech event must carry a transcription.
+        ann = [e for e in ann
+               if not (e.get("type") == "speech" and not str(e.get("transcription") or "").strip())]
         return fill_timeline_gaps(ann, duration, sfx_predictions=sfx_predictions or [])
