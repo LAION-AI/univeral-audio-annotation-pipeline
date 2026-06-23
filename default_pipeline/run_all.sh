@@ -11,9 +11,11 @@
 #   bash run_all.sh --audio /path/to/clips --workdir ./uaap_work --envs ./envs [--no-sfx] [--fusion gemma|moss]
 #
 # Final-stage fusion:
-#   --fusion gemma  (DEFAULT) Gemma-4-12B text-only fusion + DiCoW overlap ASR (best Reward on
-#                   SoundScape-Bench; no audio in the final step). Adds pyannote + DiCoW + Gemma stages.
-#   --fusion moss   legacy MOSS-Audio-8B-Thinking annotator (audio-grounded; higher precision/F1).
+#   --fusion gemma    (DEFAULT) Gemma-4-12B text-only fusion + DiCoW overlap ASR (best Reward on
+#                     SoundScape-Bench; no audio in the final step). Adds pyannote + DiCoW + Gemma stages.
+#   --fusion moss     legacy MOSS-Audio-8B-Thinking annotator (audio-grounded; higher precision/F1).
+#   --fusion dramabox Gemma-4-E4B-it DramaBox prompt generator (outputs DramaBox prompts, not JSON).
+#                     Adds speaker embedding stage + DramaBox fusion. Requires stage 2b.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -71,15 +73,22 @@ fi
 # Stage 2: Whisper experts
 runp "stage 2: Whisper experts" "$PY_BASE" workers/stage2_whisper_experts.py
 
+# Stage 2b: Speaker embeddings (for dramabox fusion, or standalone speaker verification)
+if [[ "$FUSION" == "dramabox" ]]; then
+  runp "stage 2b: Speaker embeddings" "$PY_BASE" workers/stage2b_speaker_embeddings.py
+fi
+
 # Stage 3: SFX LoRA (optional) + vocal-burst candidate pre-pass
 if [[ "$SFX" == "1" ]]; then
   runp "stage 3: SFX LoRA" "$PY_BASE" workers/stage3_sfx_lora.py
 fi
 runp "stage 3b: vocal-burst candidates" "$PY_BASE" workers/stage3b_vocalburst.py
 
-# Final fusion: Gemma-12B text-only (DEFAULT) or legacy MOSS-Audio annotator
+# Final fusion: Gemma-12B text-only (DEFAULT), DramaBox prompts, or legacy MOSS-Audio annotator
 if [[ "$FUSION" == "gemma" ]]; then
   runp "stage 5: Gemma-12B text-only fusion (DEFAULT)" "$ENVS/venv_gemma/bin/python" workers/stage5_gemma_fusion.py
+elif [[ "$FUSION" == "dramabox" ]]; then
+  runp "stage 5: DramaBox prompt generation (Gemma 4 E4B-it)" "$PY_BASE" workers/stage5_dramabox_fusion.py
 else
   runp "stage 4: MOSS-Audio annotator (legacy)" "$PY_BASE" workers/stage4_moss_annotator.py
 fi
