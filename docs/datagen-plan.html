@@ -1,0 +1,577 @@
+<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Large-Scale Soundscape Training Data — Build Plan (UAAP)</title>
+<style>
+:root{--bg:#0f1216;--card:#171c23;--ink:#e7ebf0;--mut:#9aa6b2;--acc:#6db3f2;--grn:#5ec88a;--amb:#ffce8a;--red:#ff8a8a;--line:#2a313c;--code:#0c1014}
+*{box-sizing:border-box}body{background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:34px 18px}
+.wrap{max-width:1060px;margin:0 auto}
+h1{font-size:30px;margin:0 0 6px;line-height:1.2}h2{font-size:23px;margin:2em 0 .5em;border-bottom:1px solid var(--line);padding-bottom:.3em}
+h3{font-size:18px;color:var(--acc);margin:1.5em 0 .4em}h4{font-size:15px;color:var(--amb);margin:1.2em 0 .3em;text-transform:uppercase;letter-spacing:.03em}
+.sub{color:var(--mut);margin:0 0 8px}a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:16px 0}
+.note{border-left:3px solid var(--acc);background:#12171d;padding:10px 14px;border-radius:6px;margin:14px 0}
+.note.g{border-left-color:var(--grn);background:#10201a}.note.a{border-left-color:var(--amb);background:#201c12}.note.r{border-left-color:var(--red);background:#201414}
+code{background:#0c1014;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:.88em;color:#d8e0ea}
+pre{background:var(--code);border:1px solid var(--line);border-radius:9px;padding:14px 16px;overflow-x:auto;font-size:13px;line-height:1.5}
+pre code{background:none;border:none;padding:0;color:#cfe0d6}
+table{width:100%;border-collapse:collapse;margin:1em 0;font-size:13.5px}
+th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--mut);font-size:11.5px;text-transform:uppercase;letter-spacing:.02em;background:#10151b}
+.tag{display:inline-block;border-radius:5px;padding:1px 7px;font-size:11px;font-weight:600}
+.ok{background:#163a28;color:#9ff0c0}.warn{background:#3a2e12;color:#ffd98a}.bad{background:#3a1717;color:#ff9d9d}
+.toc{columns:2;font-size:14px}.toc a{display:block;padding:2px 0}
+ul{margin:.4em 0}li{margin:.28em 0}.mut{color:var(--mut)}.big{font-size:17px}
+.kbd{font-family:ui-monospace,monospace;background:#0c1014;border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:.85em}
+hr{border:none;border-top:1px solid var(--line);margin:2em 0}
+.diagram{white-space:pre;font-family:ui-monospace,monospace;font-size:12px;line-height:1.35;color:#bcd;overflow-x:auto;background:var(--code);border:1px solid var(--line);border-radius:9px;padding:14px}
+</style></head><body><div class=wrap>
+
+<h1>Large-Scale Soundscape Training Data — a build plan</h1>
+<p class=sub>Generating millions of richly-annotated multilingual soundscapes to pre-train a single
+model that replaces the LAION Universal Audio Annotation Pipeline (UAAP) ensemble. v1 · for engineers
+new to the project.</p>
+
+<div class=card><b>TL;DR.</b> We already built a 200-clip benchmark (<b>SoundScape-Bench</b>) by gluing
+"understood" audio pieces (speech, sound effects, music, vocal bursts) onto a timeline so that the
+<b>exact answer key is known by construction</b>. This document scales that idea to <b>millions of
+clips across ~50 languages</b> (everything VibeVoice-ASR supports), with overlapping speech, ducked
+backgrounds, procedural loudness, and cross-lingual same-speaker tricks — formatted in the UAAP JSON
+schema. The end goal: <b>pre-train</b> one audio-LLM to emit the whole UAAP annotation in a single
+pass, then <b>fine-tune</b> it on the ensemble's predictions, so we no longer need the slow multi-model
+ensemble. Below: the data sources & their exact fields, the sampling/captioning/mixing algorithms with
+code, two compute architectures (CPU swarm vs. supercomputer), the output format, the downstream model
+design, and a licensing matrix.</div>
+
+<div class=card><h3 style="margin-top:0">Contents</h3><div class=toc>
+<a href="#bg">1. Background: UAAP & why this dataset</a>
+<a href="#bench">2. What we already did (SoundScape-Bench)</a>
+<a href="#goal">3. The target & design knobs</a>
+<a href="#sources">4. Data sources (fields, license, streaming)</a>
+<a href="#speech">5. Speech sampling strategy</a>
+<a href="#captions">6. Captions / ground truth</a>
+<a href="#vc">7. Cross-lingual same speaker (voice conversion)</a>
+<a href="#mix">8. The soundscape mixer (overlap, ducking, loudness)</a>
+<a href="#format">9. Output format (UAAP-compatible)</a>
+<a href="#scale">10. Two-stage architecture (CPU-pack → HF → GPU)</a>
+<a href="#stage1">&nbsp;&nbsp;10.1 Stage 1 — CPU storage server</a>
+<a href="#stage2">&nbsp;&nbsp;10.2 Stage 2 — decentralized GPU servers</a>
+<a href="#annotate">11. Alternative — supercomputer / shared FS</a>
+<a href="#model">12. Downstream: the single-pass model</a>
+<a href="#license">13. Licensing & data hygiene</a>
+<a href="#roadmap">14. Roadmap</a>
+</div></div>
+
+<h2 id=bg>1. Background — what is UAAP and why build this?</h2>
+<p>The <b>Universal Audio Annotation Pipeline</b> (<a href="https://github.com/LAION-AI/univeral-audio-annotation-pipeline">GitHub</a>)
+listens to any audio clip and emits a single structured JSON list describing <i>everything audible,
+second by second</i>: who speaks, when, what they say, in which language, with what emotion / age /
+gender / timbre / speaking-style; every non-speech sound effect; the music; and little vocal bursts
+(laughs, sighs). Today it does this with an <b>ensemble</b> of ~8 models (VibeVoice + Nemotron ASR,
+pyannote/Sortformer diarization, DiCoW overlap ASR, Whisper "expert" caption models, an SFX detector,
+and a fusing LLM). That's accurate but heavy and slow.</p>
+<p class=big><b>The plan in one sentence:</b> manufacture a huge, perfectly-labelled training set of
+synthetic-but-realistic soundscapes, use it to <b>pre-train</b> one model to predict the UAAP output in
+a single forward pass, then <b>distill</b> the ensemble into it — replacing 8 models with 1.</p>
+<p>Why synthetic soundscapes? Because if you <b>assemble</b> a clip from pieces you already understand
+(a known speech utterance + a known sound effect + known music), then you <b>already know the perfect
+label</b> — no human annotation, no ensemble needed for the ground truth. That is exactly how
+SoundScape-Bench was built; we are now industrialising it.</p>
+
+<h3>The established output format (memorise this)</h3>
+<p>Every clip is a JSON array of <b>event dictionaries</b>, one of four <code>type</code>s. This is the
+UAAP schema the model must learn to emit:</p>
+<pre><code>// speech
+{"type":"speech","start_time":2.31,"end_time":5.87,"transcription":"I can't believe you did that",
+ "speaker_id":"speaker_1","language":"en","emotion":"clearly intense anger laced with disappointment",
+ "age":"adult_30s","gender":"female","voice_timbre":"alto, warm, slightly raspy",
+ "speaking_style":"confrontational bark, clipped","accent":"American Midwest","speaking_rate":"fast"}
+// vocal_burst
+{"type":"vocal_burst","start_time":5.87,"end_time":6.14,"speaker_id":"speaker_1",
+ "vocal_burst":"scoff","emotion":"slight contempt with a flicker of amusement","transcription":null}
+// sound_event
+{"type":"sound_event","start_time":3.10,"end_time":5.20,
+ "description":"Medium-sized dog barking aggressively in the background","loudness":"moderate"}
+// music
+{"type":"music","start_time":9.80,"end_time":15.10,
+ "description":"Upbeat acoustic folk-pop: strummed steel-string guitar, light tambourine, ~110 BPM, warm",
+ "loudness":"moderate"}</code></pre>
+<p class=mut>Per-clip wrapper used by the benchmark: <code>{"clip_id","duration","num_speakers",
+"languages":[...],"events":[...]}</code>. Times in seconds; <code>loudness ∈ {very_quiet, quiet,
+moderate, loud, very_loud}</code>; <code>speaker_id</code> is consistent within a clip; events may overlap.</p>
+
+<h2 id=bench>2. What we already did — SoundScape-Bench (200 clips)</h2>
+<p>Three scripts, run once on one GPU box. This is the seed recipe we are scaling.</p>
+<div class=diagram>collect_pools.py        bud_e_caption.py            build_soundscapes.py
+─────────────────       ──────────────────          ────────────────────────
+stream source HF    →   caption "how it's said"  →  glue pieces on a timeline →  clip_NNN.mp3
+datasets, 1 shard       per speech snippet with      (bg music/sfx + speech turns  clip_NNN.json
+at a time; save         BUD-E-Whisper_V1.21          + vocal bursts + fg sfx),     (EXACT answer key)
+16 kHz wavs + JSONL                                  RMS-mix, peak-limit, export</div>
+<ul>
+<li><b>Pools</b> (one JSONL per layer): speech (emolia EN/DE/FR, MLS ES/NL, Emilia ZH, 3–12&nbsp;s,
+unique speakers), SFX (AudioSet-grounded captions, music/speech filtered out, 0.8–10&nbsp;s), music
+(captioned-ai-music), vocal bursts (synthetic).</li>
+<li><b>Mixing</b> (<code>build_soundscapes.py</code>): durations spread 10–60&nbsp;s; background = 60%
+music bed / 20% ambient-SFX bed / 20% silence; 1–3 speech turns; <b>25% overlap</b> (2nd turn slides
+into the 1st); ~40% of turns get a vocal burst; 1–3 foreground SFX. Everything RMS-normalised per layer
+(speech 0.11, music bed 0.045, fg-SFX 0.075…), summed, peak-limited to 0.97, exported 16&nbsp;kHz MP3.</li>
+<li><b>Answer key</b> written directly from the placement decisions — no model needed.</li>
+</ul>
+<p>That benchmark now ranks 15 systems; the best single-pass-able config (Gemma-12B text fusion) scores
+Reward 0.253. <span class=mut>(The benchmark answer keys are exact; the LLM fuser is only used by the
+<i>pipeline</i> we want to distill.)</span></p>
+
+<h2 id=goal>3. The target & the design knobs</h2>
+<table>
+<tr><th>Knob</th><th>Benchmark (200)</th><th>Large-scale target</th></tr>
+<tr><td>Count</td><td>200</td><td><b>1M → 10M+</b> soundscapes</td></tr>
+<tr><td>Languages</td><td>6</td><td><b>~50</b> — the full VibeVoice-ASR set (see §5)</td></tr>
+<tr><td>Duration</td><td>10–60 s</td><td><b>5–60 s</b></td></tr>
+<tr><td>Speech emotion diversity</td><td>low (read speech)</td><td><b>high</b> — 40–50% from emotional corpora</td></tr>
+<tr><td>Overlapping speech</td><td>25%</td><td><b>20–25%</b>, only between <i>different</i> identities</td></tr>
+<tr><td>Same speaker / multiple languages</td><td>—</td><td><b>yes</b>, via Chatterbox voice conversion</td></tr>
+<tr><td>Loudness labels</td><td>coarse</td><td><b>procedural</b> 5-level ladder from mix gains</td></tr>
+<tr><td>SFX/music ↔ speech overlap</td><td>basic</td><td><b>full matrix</b> (duck, foreground stabs, music-with-speech)</td></tr>
+<tr><td>Captions</td><td>BUD-E only</td><td><b>reuse source metadata</b>; whisper+Gemma only when missing</td></tr>
+</table>
+
+<h2 id=sources>4. Data sources — fields, licensing, how to stream</h2>
+<p>All are HuggingFace <b>WebDataset</b> tars (except MLS, which is HF-native). <b>Critical gotcha:</b>
+in the LAION/audioset tars all metadata is under a top-level <code>json</code> key
+(<code>sample["json"][...]</code>), and the SFX caption key is <code>"Flash 2.5 Annotation"</code> for the
+LAION sound sets but <code>"Flash 2.0 Annotation…"</code> for music/audioset. Guard every field with
+<code>.get()</code>.</p>
+
+<h3>Speech</h3>
+<table>
+<tr><th>Source</th><th>Use for</th><th>Key fields</th><th>License</th></tr>
+<tr><td><b>laion/majestrino-data</b><br><code>common-voice_&lt;lang&gt;_…​.tar</code></td>
+<td><b>Balanced ~50-lang base.</b> FLAC; one tar per language.</td>
+<td>Sidecar JSON has a single <code>caption</code> (a long prose caption already baking in
+gender/age/accent/timbre/style). Transcript + lang + CV-clip-id come from the file path
+(<code>en/common_voice_en_18525958.flac</code>). <span class=mut>The <i>numbered</i> shards
+(<code>00000.tar</code>…) instead carry separate <code>timbre_whisper</code>,
+<code>voice_tagging_whisper</code>, <code>emotion_whisper</code>, <code>unified_detailed_caption*</code>.</span></td>
+<td><span class=tag ok>CC0*</span> CV-derived</td></tr>
+<tr><td><b>laion/Emolia</b> (+ <b>emolia-balanced-5M-subset</b>)</td>
+<td><b>Emotional speech</b> + langs not in CV. MP3.</td>
+<td>Clean fields: <code>text</code> (transcript), <code>speaker</code>, <code>language</code>,
+<code>emotion_caption</code> (prose), <code>emotion_annotation</code> (55 <code>*_best</code> scores incl.
+<code>Age_best</code>,<code>Gender_best</code>,<code>Valence/Arousal</code>), <code>wavelm_timbre_embedding</code>.</td>
+<td><span class=tag ok>CC-BY-4.0</span></td></tr>
+<tr><td><b>laion/laions_got_talent_…long_captions</b></td>
+<td><b>Intense acted emotion</b> (mostly EN/DE, OpenAI-TTS voices, 28 emotions).</td>
+<td>Two JSON schemas — guard with <code>.get()</code>: <code>flash_transcription</code> (ASR),
+<code>annotation</code> &amp; <code>detailed_caption</code> (long captions w/ gender/age/valence/emotion),
+<code>voice</code>, <code>performance_instruction</code>. Lang in tar name.</td>
+<td><span class=tag warn>verify</span></td></tr>
+<tr><td><b>facebook/multilingual_librispeech</b></td>
+<td><b>de/nl/fr/es/it/pt/pl</b> read speech (top up scarce langs).</td>
+<td>HF-native configs; columns <code>audio</code>, <code>transcript</code>, <code>speaker_id</code>,
+<code>audio_duration</code>.</td>
+<td><span class=tag ok>CC-BY-4.0</span></td></tr>
+</table>
+
+<h3>Sound effects, music, vocal bursts</h3>
+<table>
+<tr><th>Source</th><th>Use</th><th>Caption field(s)</th><th>License (commercial?)</th></tr>
+<tr><td><b>laion/freesound-commercially-permissive-…captions</b></td><td>SFX (preferred)</td>
+<td><code>json["Flash 2.5 Annotation"]["caption"]</code> (short) + <code>json["comprehensive_caption"]</code>
+(long); <code>duration_ms</code>; carry <code>freesound_id</code>/<code>username</code> when
+<code>attribution_required==1</code>.</td><td><span class=tag ok>CC0 / CC-BY</span> ✓</td></tr>
+<tr><td><b>mitermix/audioset-with-grounded-captions</b></td><td>SFX (broad classes)</td>
+<td><code>json["caption"]</code> (AudioSet class) + <code>json["Flash 2.0 Annotation with Hint"]["caption"]</code>;
+<code>duration_ms</code>.</td><td><span class=tag bad>YouTube-sourced — research only</span></td></tr>
+<tr><td><b>laion/generated-sound-events</b></td><td>SFX (synthetic, 1190 classes)</td>
+<td><code>json["prompt"]</code> (class+style) + <code>json["Flash 2.5 Annotation"]["caption"]</code>.</td>
+<td><span class=tag bad>Tango-Flux NC — verify</span></td></tr>
+<tr><td><b>laion/captioned-ai-music-snippets</b></td><td>Music (Suno/Udio, 3–30 s)</td>
+<td><code>json["Flash 2.0 Annotation"]["caption"]</code> (tempo/mood/vocals inline).</td>
+<td><span class=tag warn>Apache-2.0 (captions); AI-audio caveat</span></td></tr>
+<tr><td>laion/improved_synthetic_vocal_bursts</td><td>Vocal bursts</td>
+<td><code>json["Flash 2.5 Annotation"].caption/.interpretation</code>, <code>gender</code>.</td>
+<td><span class=tag ok>permissive</span></td></tr>
+</table>
+
+<h4>Streaming pattern (use webdataset for the LAION tars)</h4>
+<pre><code>import webdataset as wds
+# pick languages by globbing the per-language common-voice tars
+base="https://huggingface.co/datasets/laion/majestrino-data/resolve/main/"
+urls=[base+f"common-voice_{l}_annotated_paraphrased.tar" for l in ("en","de","fr","nl","pl")]
+ds=(wds.WebDataset(urls, handler=wds.ignore_and_continue, shardshuffle=True)
+      .decode(wds.torch_audio).to_tuple("flac","json","__key__"))
+for audio, meta, key in ds:
+    caption = meta.get("caption","")            # unified prose caption (already rich!)
+    cv_id   = key.split("/")[-1]                # common_voice_en_18525958
+    lang    = key.split("/")[0]                 # en
+    # transcript: join cv_id back to the Common Voice TSV, or run VibeVoice-ASR at annotation time</code></pre>
+
+<h2 id=speech>5. Speech sampling strategy</h2>
+<p>Two requirements pull in different directions — <b>language balance</b> (don't let English dominate)
+vs. <b>emotion diversity</b> (the emotional corpora are English-heavy). We satisfy both with a 50/50 split
+<i>per speech slot</i>:</p>
+<div class=note g><b>For every speech utterance placed into a soundscape, flip a coin:</b><br>
+• <b>~50% "balanced" track</b> — sample a language <i>uniformly at random</i> from the ~50 VibeVoice-ASR
+languages, then draw a clip for that language from <b>majestrino common-voice</b> (primary) ∪
+<b>Emolia</b> (for languages/emotions CV lacks, e.g. emotional ZH/JA/KO) ∪ <b>MLS</b> (de/nl/fr/es/it/pt/pl
+top-up). This makes the long tail of languages appear roughly equally.<br>
+• <b>~50% "emotional" track</b> — sample from <b>emolia-balanced-5M-subset</b> + <b>laions_got_talent</b>
++ the majestrino <b>common-voice</b> emotional captions. Mostly English/German but spanning ~40 emotions,
+giving the model strong affect supervision.</div>
+<p><b>VibeVoice-ASR target language set (51):</b> <span class=mut>en, zh, es, pt, de, ja, ko, fr, ru, id,
+sv, it, he, nl, pl, no, tr, th, ar, hu, ca, cs, da, fa, af, hi, fi, et, am, el, ro, vi, bg, is, sl, sk, lt,
+sw, uk, kl, lv, hr, ne, sr, tl, yi, ms, ur, mn, hy, jv.</span> Use this list as the uniform-sampling domain;
+fall back to the nearest available corpus per language.</p>
+<p><b>Speaker uniqueness & dedup.</b> Keep a per-run Bloom filter of used <code>(source, clip_id)</code> so
+no snippet is reused, and prefer distinct <code>speaker</code> ids within a clip. Filter to 2–14 s
+utterances with non-empty transcripts and decent quality (e.g. Emolia <code>dnsmos</code> &gt; 2.5).</p>
+
+<h2 id=captions>6. Captions / ground truth — reuse first, derive second</h2>
+<p>Each placed piece needs its UAAP fields. <b>Prefer the metadata that already ships with the source</b>
+(free, instant); only run the Whisper "expert" captioners + the Gemma merge when a field is missing.</p>
+<table>
+<tr><th>Field</th><th>If present in source…</th><th>Else derive (annotation phase, GPU)</th></tr>
+<tr><td>transcription</td><td>MLS <code>transcript</code>, Emolia <code>text</code>, got_talent <code>flash_transcription</code></td><td>VibeVoice-ASR (also gives language + diarization)</td></tr>
+<tr><td>emotion</td><td>Emolia <code>emotion_caption</code>; majestrino <code>caption</code>/<code>emotion_whisper</code></td><td><code>laion/BUD-E-Whisper_V1.21</code></td></tr>
+<tr><td>voice_timbre</td><td>majestrino numbered <code>timbre_whisper</code></td><td><code>laion/timbre-whisper</code></td></tr>
+<tr><td>speaking_style</td><td>majestrino <code>voice_tagging_whisper</code></td><td><code>laion/voice-tagging-whisper</code></td></tr>
+<tr><td>age / gender</td><td>Emolia <code>Age_best</code>/<code>Gender_best</code>; caption prose</td><td>voice-tagging / parse caption</td></tr>
+<tr><td>sound_event / music description</td><td>the dataset's grounded caption</td><td><code>laion/sound-effect-captioning-whisper</code></td></tr>
+</table>
+<div class=note>The <b>final per-event caption</b> (the polished <code>emotion</code>/<code>speaking_style</code>
+strings the model trains on) is produced exactly as in the pipeline today: feed all raw expert outputs +
+source metadata as <b>text</b> to <b>Gemma-4-12B</b> (<code>unsloth/gemma-4-12b-it-GGUF</code>, our best
+fuser at Reward 0.253; <code>gemma-4-E4B</code>/4B is the lighter option at 0.244) and have it write the
+final caption. For the procedurally-built data, the source metadata is usually rich enough that the
+expensive captioners can be skipped on most clips.</div>
+
+<h2 id=vc>7. Cross-lingual same speaker — Chatterbox voice conversion</h2>
+<p>We want clips where <b>one identity speaks two languages</b> (e.g. an English then a Dutch turn) — a
+hard, realistic case. We can't get the same real person in two languages, so we synthesise identity with
+<b>Chatterbox VC</b> (<code>ResembleAI/chatterbox</code>, MIT): pick a <i>same-gender</i> second utterance
+in another language, then <b>convert its voice</b> to a fixed target identity, so both turns share a
+timbre.</p>
+<pre><code>from chatterbox.vc import ChatterboxVC
+vc = ChatterboxVC.from_pretrained("cuda")
+# turn 1: english clip from speaker A (its own audio becomes the identity anchor)
+# turn 2: dutch clip from a DIFFERENT same-gender speaker -> convert to A's voice
+converted = vc.generate(audio=dutch_clip_wav, target_voice_path=english_clip_wav)  # 24 kHz
+# now both turns sound like the same person; ground-truth speaker_id is shared</code></pre>
+<div class=note a><b>Overlap rule (important):</b> a soundscape may have <b>overlapping speech only
+between DIFFERENT identities</b>. If a clip uses the same-speaker-two-languages trick, those turns must be
+<b>sequential, never overlapping</b> (a person can't talk over themselves). Overlap ⇒ ≥2 distinct
+<code>speaker_id</code>s.</div>
+
+<h2 id=mix>8. The soundscape mixer — overlap, ducking, procedural loudness</h2>
+<p>A pure-CPU procedural step (no GPU). Extends <code>build_soundscapes.py</code>. Key additions vs. the
+benchmark: a full <b>overlap matrix</b>, <b>side-chain ducking</b> (lower background under speech),
+<b>music-with-foreground-intrusion</b>, and a <b>loudness ladder</b> derived from the actual mix gain.</p>
+
+<h4>The loudness ladder (procedural → label)</h4>
+<p>Loudness is decided <i>by us</i> as a target RMS gain, then mapped to the UAAP label — so the label is
+ground-truth, not estimated:</p>
+<pre><code>LOUD = {"very_quiet":0.020,"quiet":0.040,"moderate":0.075,"loud":0.12,"very_loud":0.18}
+def place(buf, audio, start_s, gain, SR=16000):
+    a = rms_norm(audio, gain)                      # set this layer's RMS to the chosen gain
+    o = int(start_s*SR); buf[o:o+len(a)] += a
+    return a                                        # label = the key whose value == gain</code></pre>
+
+<h4>Overlap matrix (what may sit on top of what)</h4>
+<table>
+<tr><th></th><th>over speech</th><th>over music</th><th>over SFX</th></tr>
+<tr><td><b>speech</b></td><td>✓ if different speaker (duck nothing; both ~equal)</td><td>✓ music ducked −6…−12 dB under speech</td><td>✓ SFX ducked</td></tr>
+<tr><td><b>SFX</b></td><td>✓ (background bed, or a foreground "stab")</td><td>✓ a non-musical stab during music</td><td>✓</td></tr>
+<tr><td><b>music</b></td><td>✓ bed under speech; or <b>loud</b> with a sudden speech/SFX intrusion</td><td>—</td><td>✓</td></tr>
+</table>
+<p>"Procedurally determined" cases the user asked for: SFX overlapping music; SFX overlapping speech;
+speech over a quiet music bed; <b>loud foreground music suddenly interrupted</b> by a speech turn or an
+out-of-place SFX stab (raise music to <code>loud/very_loud</code>, drop a <code>moderate/loud</code> speech
+or SFX event on top). Each placement writes its own ground-truth event with its own <code>loudness</code>.</p>
+
+<h4>Side-chain ducking (background gets quieter under speech)</h4>
+<pre><code>def duck(buf_bg, speech_spans, SR=16000, atten_db=-9, fade=0.25):
+    g = np.ones(len(buf_bg), dtype=np.float32)
+    k = 10**(atten_db/20.0)
+    for (s,e) in speech_spans:                       # lower bg during each speech span (with fades)
+        i,j = int(s*SR), int(e*SR)
+        ramp = int(fade*SR)
+        g[i:j] = k
+        g[max(0,i-ramp):i] = np.linspace(1,k,min(ramp,i))
+        g[j:j+ramp] = np.linspace(k,1,min(ramp,len(g)-j))
+    return buf_bg * g</code></pre>
+
+<h4>Clip assembly (sketch — one CPU worker, no GPU)</h4>
+<pre><code>def build_clip(rng):
+    D = rng.uniform(5, 60); total=int(D*SR); buf=np.zeros(total, np.float32); ev=[]
+    # 1) background: 55% music bed / 20% ambient-SFX bed / 25% silence
+    r=rng.random()
+    if r&lt;0.55:
+        m=draw_music();  a=place(buf, loop_to(wav(m),total), 0, LOUD[rng.choice(["very_quiet","quiet","moderate"])])
+        ev.append(music_event(0,D,m))
+    elif r&lt;0.75:
+        s=draw_sfx();    place(buf, loop_to(wav(s),total), 0, LOUD["quiet"]); ev.append(sfx_event(0,D,s,"quiet"))
+    # 2) speech turns (1-3), 20-25% overlapping (different identities only)
+    spans=[]; ids={}
+    for turn in plan_turns(D, rng):                  # returns (start, clip, identity, do_vc, loud)
+        a=wav(turn.clip);  a=maybe_vc(a, turn)        # cross-lingual same-speaker if requested
+        place(buf, a, turn.start, LOUD[turn.loud]);  spans.append((turn.start, turn.start+len(a)/SR))
+        ev.append(speech_event(turn))                # transcription/lang/emotion/speaker_id/... from source meta
+        if rng.random()&lt;0.4: ev.append(place_vocal_burst(buf, turn, rng))
+    # 3) foreground SFX / music intrusions (some during speech, some in gaps)
+    for _ in range(rng.choice([0,1,1,2,3])):
+        s=draw_sfx(); loud=rng.choice(["quiet","moderate","loud","very_loud"])
+        st=rng.uniform(0, max(0.1, D-dur(s)));  place(buf, wav(s), st, LOUD[loud]); ev.append(sfx_event(st,st+dur(s),s,loud))
+    # 4) duck the background under speech, mixdown, peak-limit
+    buf = apply_ducking_to_background(buf, spans)
+    buf *= min(1.0, 0.97/(np.max(np.abs(buf))+1e-9))
+    return buf, sorted(ev, key=lambda e:e["start_time"])</code></pre>
+<p class=mut>Sample rate: keep 24 kHz internally if you want crisper SFX/music, export 16 kHz mono MP3 for
+the speech-centric model (matches the encoders). Everything above is deterministic given the worker's RNG
+seed → reproducible clips.</p>
+
+<h2 id=format>9. Output format — UAAP-compatible, plus component files</h2>
+<p>Each generated clip emits <b>three things</b> so the heavy GPU annotation can be deferred and so the
+data is debuggable:</p>
+<ol>
+<li><b><code>clip_NNN.mp3</code></b> — the mixed soundscape (16 kHz mono).</li>
+<li><b><code>clip_NNN.json</code></b> — the UAAP answer key (the event list from §1), <i>plus</i> a
+<code>provenance</code> block per event: <code>{source_dataset, source_key, gain, raw_caption,
+needs_caption:true|false}</code>. <code>needs_caption=true</code> marks events whose final caption must be
+written by the GPU/Gemma phase.</li>
+<li><b><code>clip_NNN_components/</code></b> — every source snippet as its own MP3 + its raw metadata JSON.
+This lets the GPU phase caption each piece <i>in isolation</i> (better than captioning the mix) and lets
+us re-mix or audit later.</li>
+</ol>
+<pre><code>clip_000123.mp3
+clip_000123.json            # {clip_id,duration,num_speakers,languages,events:[...with provenance...]}
+clip_000123_components/
+   spk0_en.mp3  spk0_en.json     # raw source meta (caption, speaker, lang, emotion_annotation,…)
+   spk1_nl.mp3  spk1_nl.json
+   sfx0.mp3     sfx0.json
+   music.mp3    music.json</code></pre>
+
+<h2 id=scale>10. Scaling to millions — the two-stage decentralized architecture</h2>
+<p class=big>The recommended design splits the work along the hardware you actually have: <b>one big
+storage/CPU server</b> that owns every source dataset and does all sampling + packaging, and a
+<b>decentralized fleet of GPU servers</b> that fetch the packaged work and do the neural captioning +
+fusion + final mixdown. The two stages talk <b>only through HuggingFace tar shards</b> — no shared
+filesystem, no central scheduler.</p>
+
+<div class=diagram>┌──────────────────────────── STAGE 1 — STORAGE / CPU SERVER (24 cores, NO GPU) ────────────────────────────┐
+│  all source datasets on local HD                                                                          │
+│       │                                                                                                   │
+│   24 worker processes (1 per core), each independently:                                                   │
+│     1. roll a soundscape RECIPE (balanced lang/emotion · duration · #turns · overlap? · bg · loudness)    │
+│     2. draw the concrete pieces from the LOCAL datasets (dedup + per-language balance counters)           │
+│     3. decode + resample each RAW component (16/24 kHz), gather ALL its source metadata                   │
+│     4. compute the full PROCEDURAL MIX PLAN (per-event start/end, gain, loudness label, duck spans,       │
+│        speaker_id, overlap flags, vc-needed) — this is the EXACT ground-truth skeleton                    │
+│     5. write ONE WebDataset row = { recipe.json + every component .flac + its .json }                     │
+│     6. pack 1000 rows → one .tar  →  push to HF  (dataset repo: raw-soundscapes)                           │
+│  CPU/IO only. No mixing, no neural nets.                                                                   │
+└───────────────────────────────────────────────┬───────────────────────────────────────────────────────────┘
+                                                 │  HF tar shards (1000 rows each)
+        ┌────────────────────────────────────────┼────────────────────────────────────────┐
+        ▼                                         ▼                                         ▼
+┌──── STAGE 2 — GPU server A ────┐    ┌──── GPU server B ────┐         ...        ┌──── GPU server N ────┐
+│ claim shards (hash-mod / lease)│    │ (different shards)    │                    │ (different shards)   │
+│ per row:                       │    │                       │                    │                      │
+│  GPU  Whisper experts caption  │    │   ── decentralized, no central scheduler; each server picks      │
+│       components missing meta   │    │      disjoint shards by id and skips shards already done ──      │
+│  GPU  Gemma-4-12B → UAAP dicts  │    │                       │                    │                      │
+│  CPU  render mixdown from the   │    │                       │                    │                      │
+│       raw components per recipe │    │                       │                    │                      │
+│  →  soundscape.mp3 + uaap.json  │    │                       │                    │                      │
+│      push to HF (annotated repo)│    │                       │                    │                      │
+└────────────────────────────────┘    └───────────────────────┘                    └──────────────────────┘</div>
+
+<div class=note g>Why this division fits the hardware: the <b>24-core, GPU-less storage box</b> is exactly
+right for Stage 1 — it's pure I/O + sampling + tar packaging, and it already holds the datasets (which are
+many TB). The <b>GPU servers never touch the source datasets</b>; they pull compact pre-bundled rows, so
+they spend 100% of their time on the captioners + Gemma + mixdown. Captioning the <b>isolated component</b>
+audio (not the mix) gives cleaner captions, and keeping the raw components in each row lets the GPU side
+re-mix, audit, or train the model on the separated sources later.</div>
+
+<h3 id=stage1>10.1 — Stage 1, in detail (CPU storage server, per worker)</h3>
+<table>
+<tr><th>Step</th><th>What the CPU does</th><th>Cost</th></tr>
+<tr><td><b>a. roll recipe</b></td><td>Sample duration (5–60 s), #speech turns, the <b>50/50 balanced-vs-emotional</b>
+track (§5), overlap decision (20–25%, <i>different identities only</i>), background type (music bed 55% /
+ambient-SFX 20% / silence 25%), #foreground SFX, #music intrusions. Pure RNG + counter bookkeeping.</td><td>µs</td></tr>
+<tr><td><b>b. draw pieces</b></td><td>Pull concrete clips from the <b>local</b> source tars/parquet for the
+chosen languages/types. Maintain a <b>per-language &amp; per-type counter</b> (global balance) and a
+<b>Bloom filter</b> of used <code>(source, clip_id)</code> (no reuse). Prefer distinct speakers per clip.</td><td>disk read</td></tr>
+<tr><td><b>c. decode + resample</b></td><td>ffmpeg/soundfile decode each chosen component → mono, resample to
+16 kHz (24 kHz if you want crisper SFX/music), trim silence. Keep the <b>RAW</b> component (do NOT mix).</td><td>~10–40 ms/file</td></tr>
+<tr><td><b>d. mix plan</b></td><td>Compute the exact placement: each event's <code>start_time</code>/
+<code>end_time</code>, target <code>loudness</code> label + its RMS <b>gain</b> (the loudness ladder, §8),
+side-chain <b>duck spans</b>, <code>speaker_id</code> assignment, overlap flags, and a <code>vc_needed</code>
+flag for cross-lingual same-speaker turns. This is the <b>ground-truth skeleton</b> — written, not predicted.</td><td>µs</td></tr>
+<tr><td><b>e. gather metadata</b></td><td>Copy each component's full source JSON (caption/timbre/voice-tagging/
+emotion_annotation/transcript/speaker/lang/license…) so the GPU side never needs the source datasets.</td><td>—</td></tr>
+<tr><td><b>f. write row</b></td><td>One WebDataset sample (one soundscape): the <code>recipe.json</code> plus
+every component as <code>&lt;role&gt;.flac</code> + <code>&lt;role&gt;.json</code> (see §10.3). FLAC keeps the
+raw audio lossless and small.</td><td>I/O</td></tr>
+<tr><td><b>g. shard + push</b></td><td>Accumulate <b>1000 rows → one .tar</b>; upload to the HF
+<code>raw-soundscapes</code> dataset repo with a content-hash shard name; append to a global
+<code>index.jsonl</code>. Overlap upload with the next shard's build.</td><td>network</td></tr>
+</table>
+<pre><code># Stage-1 worker (1 per core × 24). All CPU.
+import webdataset as wds, soundfile as sf, io, json
+def build_row(rng, sources, counters, seen):
+    rec = roll_recipe(rng, counters)                       # a,d: duration/turns/overlap/bg/loudness plan
+    parts = draw_pieces(rec, sources, counters, seen)      # b: concrete clips, balanced + dedup
+    row = {"__key__": rec["clip_id"], "recipe.json": json.dumps(rec).encode()}
+    for role, p in parts.items():                          # role = spk0 / spk1 / sfx0 / music / vb0 ...
+        a, sr = decode_resample(p["path"], target_sr=16000)  # c: raw component, no mixing
+        buf = io.BytesIO(); sf.write(buf, a, sr, format="FLAC")
+        row[f"{role}.flac"] = buf.getvalue()
+        row[f"{role}.json"] = json.dumps(p["meta"]).encode()  # e: full source metadata
+    return row
+sink = wds.ShardWriter("raw-soundscapes-%06d.tar", maxcount=1000)   # f,g: 1000 rows/tar
+for _ in range(per_worker_quota):
+    sink.write(build_row(rng, SOURCES, COUNTERS, SEEN))
+sink.close()                                                # then: huggingface_hub upload_folder(...)</code></pre>
+<div class=note><b>Throughput.</b> Per soundscape Stage 1 decodes only ~3–8 short files (~tens of ms each) +
+a tar write; the upload is amortized. 24 cores comfortably produce <b>thousands of packaged soundscapes per
+hour</b>, bounded mainly by HF upload bandwidth — so one storage server keeps a sizeable GPU fleet fed.</div>
+
+<h3 id=stage2>10.2 — Stage 2, in detail (decentralized GPU servers, per shard)</h3>
+<p>Each GPU server claims <b>disjoint</b> shards with no coordinator — e.g. <code>shard_id % N == my_id</code>,
+or atomically rename a <code>&lt;shard&gt;.lease</code> file; skip any shard whose annotated output already
+exists (idempotent, crash-safe). Within a shard it runs three sub-steps, pipelined so the GPU never idles:</p>
+<table>
+<tr><th>Sub-step</th><th>Device</th><th>What happens</th></tr>
+<tr><td><b>1. caption missing fields</b></td><td><span class=tag warn>GPU</span></td><td>For each component
+<i>lacking</i> source metadata, run the LAION Whisper experts on the <b>isolated</b> component (≤30 s):
+<code>BUD-E-Whisper_V1.21</code> (emotion), <code>timbre-whisper</code>, <code>voice-tagging-whisper</code>
+(style/age/gender) for speech; <code>sound-effect-captioning-whisper</code> for sound/music. Transcript is
+usually in the source meta; if not, <code>VibeVoice-ASR</code>. <b>Batch all components in the shard</b> for
+GPU efficiency. (Most procedural clips already have rich source captions → most of this is skipped.)</td></tr>
+<tr><td><b>2. fuse → UAAP dicts</b></td><td><span class=tag warn>GPU</span></td><td><b>Gemma-4-12B</b>
+(<code>unsloth/gemma-4-12b-it-GGUF</code>, llama.cpp) takes the <b>recipe</b> (exact known timings, speakers,
+overlap, loudness from Stage 1) + the captions/metadata and writes the final UAAP <code>events</code> list —
+polished <code>emotion</code>/<code>speaking_style</code> strings, dedicated <code>music</code> type, etc.
+<b>It must NOT alter the Stage-1 timings/speakers</b> (those are ground truth); it only writes descriptions.
+This is the bottleneck (~tens of GPU-seconds per soundscape).</td></tr>
+<tr><td><b>3. render mixdown</b></td><td><span class=tag ok>CPU</span></td><td>Execute the §8 mixer on the GPU
+box's CPU: place each raw component at its recipe <code>start_time</code>, apply the <b>loudness gains</b> and
+<b>side-chain ducking</b>, sum, peak-limit, export <b>16 kHz mono MP3</b>. Runs concurrently with the GPU
+steps via a queue, so it's effectively free. (Cross-lingual same-speaker turns get Chatterbox VC here if the
+box has spare GPU, or pre-VC'd in Stage 1.)</td></tr>
+</table>
+<pre><code># Stage-2 GPU worker. Pipeline: CPU decode/render || GPU caption/fuse.
+for shard in claim_my_shards(all_shards, my_id, N):        # decentralized, disjoint, idempotent
+    for row in wds.WebDataset(shard).decode():
+        rec  = json.loads(row["recipe.json"])
+        comps = {r[:-5]: row[r] for r in row if r.endswith(".flac")}
+        meta  = {r[:-5]: json.loads(row[r]) for r in row if r.endswith(".json") and r!="recipe.json"}
+        # 1) GPU: only caption components whose metadata is missing a needed field (batched)
+        feats = caption_missing(comps, meta)               # BUD-E / timbre / voice-tag / sfx-caption
+        # 2) GPU: Gemma writes the final event descriptions on the FIXED Stage-1 timeline
+        events = gemma_fuse(rec, meta, feats)              # gemma-4-12b-it-GGUF ; timings frozen
+        # 3) CPU (concurrent): render the soundscape audio from the raw components per the recipe
+        mp3 = render_mixdown(comps, rec)                   # §8 mixer: place + duck + loudness + peak-limit
+        push_to_hf(rec["clip_id"], mp3, {"clip_id":rec["clip_id"], **rec["header"], "events":events})</code></pre>
+<div class=note a><b>GPU vs CPU balance on a Stage-2 box.</b> <b>GPU</b> = the Whisper captioners (4 small
+models, batched) + <b>Gemma-4-12B</b> (the dominant cost) + optional VibeVoice-ASR. <b>CPU</b> (run in
+parallel) = tar I/O, FLAC decode, the mixdown render, MP3 encode, and HF upload. Feed a small prefetch queue
+so the CPU has the next soundscape's audio rendered while the GPU is still fusing the current one — the
+~30 GPU-seconds of Gemma hide all the CPU work behind them.</div>
+
+<h3 id=schema>10.3 — The Stage-1 → Stage-2 row schema (one soundscape = one WebDataset sample)</h3>
+<pre><code>raw-soundscapes-000042.tar
+  └─ soundscape_0041873                       # __key__
+       recipe.json     # {clip_id, duration, num_speakers, languages,
+                       #  events:[{type,start_time,end_time,gain,loudness,speaker_id,role,
+                       #           vc_needed, needs_caption, source_dataset, source_key}, ...]}
+       spk0.flac  spk0.json   # raw EN utterance + full source meta (caption,timbre,emotion_annotation,text,…)
+       spk1.flac  spk1.json   # raw NL utterance (vc_needed → convert to spk0 identity in Stage 2)
+       sfx0.flac  sfx0.json   # raw sound effect + grounded caption
+       music.flac music.json  # raw music bed + caption
+       vb0.flac   vb0.json    # raw vocal burst + caption</code></pre>
+<p>The <code>recipe.json</code> <b>events</b> are the exact ground-truth skeleton (timings, speakers, gains,
+loudness) computed on CPU; Stage 2 only fills/polishes the text <code>description</code>/<code>emotion</code>/
+<code>speaking_style</code> fields and renders the audio. <code>needs_caption</code> per event tells Stage 2
+which components actually require a Whisper pass (most don't — the source metadata already has it).</p>
+
+<h3 id=annotate>11. Alternative — supercomputer / shared filesystem</h3>
+<p>If instead you have one big machine with tens of TB of fast shared scratch, collapse the two stages onto
+it: a <b>CPU partition</b> runs Stage 1 writing rows to a shared directory (skip the HF upload), and a
+<b>GPU partition</b> runs Stage 2 reading the same directory in place. Same code, same row schema — just a
+local path instead of an HF repo, with <b>no upload/download churn</b>. Use this when one machine has both
+the storage and the GPUs; use the two-stage HF design (§10) when storage and GPUs live on separate boxes —
+which is the case here (24-core storage server feeding a separate GPU fleet).</p>
+
+<h2 id=model>12. Downstream — the single-pass model we are training toward</h2>
+<p>The whole point of the dataset: <b>train one model to emit the entire UAAP JSON in a single pass</b>,
+so we can retire the ensemble. Two training stages:</p>
+<ol>
+<li><b>Pre-train</b> on the millions of procedural soundscapes (perfect labels, free) — teaches the model
+the <i>format</i>, diarization, multilingual ASR, emotion/timbre/style captioning, SFX & music
+description, overlapping speech, and full-timeline coverage.</li>
+<li><b>Fine-tune / distill</b> on the <b>ensemble's predictions over real audio</b> — closes the
+synthetic→real gap so the single model matches (or beats) the slow ensemble on real recordings.</li>
+</ol>
+<h3>Architecture sketch</h3>
+<div class=diagram>            ┌──────────── 30 s window (×2 for 0–30 s and 30–60 s) ───────────┐
+ audio ───▶ │  ASR encoder (VibeVoice tokenizer / Gemma audio)  [FROZEN or LoRA] │
+            │  + SFX-Whisper encoder  ─▶ projector ─┐  (LAION sound-effect enc.) │  trainable
+            │  + voice-tagging-Whisper enc ─▶ proj ─┤                            │  projectors
+            └───────────────────────────────────────┴─▶  LLM (Gemma-4 / Qwen) ──┘
+                                                          LoRA on the LLM  ──▶  UAAP JSON</div>
+<ul>
+<li><b>Base candidates:</b> <b>VibeVoice-ASR</b> (7B; great diarization + 51-lang ASR; encoder→Qwen LLM
+design, so extra encoders project naturally) <i>or</i> <b>Gemma-4</b> (12B / E4B; natively multimodal,
+encoder-free audio). VibeVoice is strong at <i>who/when/what</i> but weak on <b>overlapping speech</b> and
+has <b>no SFX/music</b> understanding — exactly the gaps the extra encoders + data fill.</li>
+<li><b>Extra audio encoders → projectors:</b> add the <b>SFX-captioning-Whisper</b> and
+<b>voice-tagging-Whisper</b> encoders, each with a trained linear projector into the LLM embedding space,
+so the LLM can <i>perceive</i> non-speech sound, music, timbre and style — abilities the base ASR lacks.</li>
+<li><b>What to freeze:</b> keep the ASR encoder frozen (or a light LoRA) to preserve transcription;
+<b>train</b> the new encoders' projectors + a <b>LoRA on the LLM</b> so it learns the new perception and the
+UAAP output format without forgetting ASR.</li>
+<li><b>30 s × 2:</b> the Whisper-family encoders cap at 30 s, so process 0–30 s and 30–60 s separately and
+concatenate/stitch the event lists (re-using speaker ids across windows).</li>
+</ul>
+<p class=mut>This dataset is the fuel for stage 1. Its breadth (50 languages, overlap, ducked SFX/music,
+emotional speech, procedural loudness) is precisely what a single model needs to learn perception the base
+ASR never had.</p>
+
+<h2 id=license>13. Licensing & data hygiene</h2>
+<table>
+<tr><th>Source</th><th>Commercial?</th><th>Action</th></tr>
+<tr><td>majestrino <i>common-voice</i> tars</td><td><span class=tag ok>CC0 (CV-derived)*</span></td><td>confirm LAION packaging terms</td></tr>
+<tr><td>Emolia / emolia-balanced-5M</td><td><span class=tag ok>CC-BY-4.0</span></td><td>attribute</td></tr>
+<tr><td>multilingual_librispeech</td><td><span class=tag ok>CC-BY-4.0</span></td><td>attribute</td></tr>
+<tr><td>laions_got_talent</td><td><span class=tag warn>unspecified</span></td><td>confirm with LAION (synthetic TTS)</td></tr>
+<tr><td>freesound permissive subset</td><td><span class=tag ok>CC0 / CC-BY</span></td><td>honor <code>attribution_required</code></td></tr>
+<tr><td>captioned-ai-music (Suno/Udio)</td><td><span class=tag warn>Apache-2.0 captions; AI-audio caveat</span></td><td>captions clean; validate audio terms</td></tr>
+<tr><td>audioset-with-grounded-captions</td><td><span class=tag bad>YouTube-sourced</span></td><td><b>research-only</b> — exclude from a commercial release</td></tr>
+<tr><td>generated-sound-events (Tango-Flux)</td><td><span class=tag bad>NC concern</span></td><td><b>verify</b> before commercial use</td></tr>
+</table>
+<div class=note a>Maintain a <b>per-clip license manifest</b> (which sources contributed). Ship a
+<b>"commercially-clean" build flag</b> that draws SFX only from <b>freesound</b> (and synthetic vocal
+bursts), music captions from the Apache set, and speech from CV/Emolia/MLS — excluding AudioSet and
+Tango-Flux. Keep a separate research build that includes everything for maximum diversity.</div>
+
+<h2 id=roadmap>14. Roadmap</h2>
+<ol>
+<li><b>Week 1 — adapters &amp; smoke test.</b> Write per-source streaming readers (return a common
+<code>Piece(audio, lang, speaker, transcript, raw_caption, fields)</code>); reproduce the §8 mixer on one
+CPU box; generate 1k clips; eyeball the answer keys with an inspector HTML.</li>
+<li><b>Week 2 — captioning &amp; VC.</b> Wire the 4 Whisper captioners + Gemma-4-12B merge for
+<code>needs_caption</code> events; integrate Chatterbox VC for cross-lingual same-speaker; validate
+against the existing scorer.</li>
+<li><b>Week 3 — scale harness.</b> Probabilistic balanced sampler; shard/index/dedup; pick architecture A
+or B; run 100k clips end-to-end; measure throughput &amp; per-clip cost.</li>
+<li><b>Week 4+ — mass production + training.</b> Generate 1M (then 10M); begin stage-1 pre-training of the
+single-pass model; then stage-2 distillation from the ensemble on real audio.</li>
+</ol>
+
+<hr>
+<p class=sub>Built on the SoundScape-Bench recipe (<code>collect_pools.py</code> · <code>bud_e_caption.py</code>
+· <code>build_soundscapes.py</code>) and the UAAP schema. Models: VibeVoice-ASR · Chatterbox VC ·
+laion/{sound-effect-captioning,voice-tagging,timbre,BUD-E_V1.21}-whisper · Gemma-4-12B fuser. Verify all
+post-cutoff model IDs and licenses against the live HF cards before committing to a commercial release.</p>
+</div></body></html>
