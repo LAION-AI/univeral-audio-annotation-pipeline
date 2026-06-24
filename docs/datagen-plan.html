@@ -46,19 +46,20 @@ design, and a licensing matrix.</div>
 <a href="#bg">1. Background: UAAP & why this dataset</a>
 <a href="#bench">2. What we already did (SoundScape-Bench)</a>
 <a href="#goal">3. The target & design knobs</a>
-<a href="#sources">4. Data sources (fields, license, streaming)</a>
-<a href="#speech">5. Speech sampling strategy</a>
-<a href="#captions">6. Captions / ground truth</a>
-<a href="#vc">7. Cross-lingual same speaker (voice conversion)</a>
-<a href="#mix">8. The soundscape mixer (overlap, ducking, loudness)</a>
-<a href="#format">9. Output format (UAAP-compatible)</a>
-<a href="#scale">10. Two-stage architecture (CPU-pack → HF → GPU)</a>
-<a href="#stage1">&nbsp;&nbsp;10.1 Stage 1 — CPU storage server</a>
-<a href="#stage2">&nbsp;&nbsp;10.2 Stage 2 — decentralized GPU servers</a>
-<a href="#annotate">11. Alternative — supercomputer / shared FS</a>
-<a href="#model">12. Downstream: the single-pass model</a>
-<a href="#license">13. Licensing & data hygiene</a>
-<a href="#roadmap">14. Roadmap</a>
+<a href="#diversity">4. Diversity & recipe sampling (mixture %)</a>
+<a href="#sources">5. Data sources (fields, license, streaming)</a>
+<a href="#speech">6. Speech sampling strategy</a>
+<a href="#captions">7. Captions / ground truth</a>
+<a href="#vc">8. Cross-lingual same speaker (voice conversion)</a>
+<a href="#mix">9. The soundscape mixer (overlap, ducking, loudness)</a>
+<a href="#format">10. Output format (UAAP-compatible)</a>
+<a href="#scale">11. Two-stage architecture (CPU-pack → HF → GPU)</a>
+<a href="#stage1">&nbsp;&nbsp;11.1 Stage 1 — CPU storage server</a>
+<a href="#stage2">&nbsp;&nbsp;11.2 Stage 2 — decentralized GPU servers</a>
+<a href="#annotate">12. Alternative — supercomputer / shared FS</a>
+<a href="#model">13. Downstream: the single-pass model</a>
+<a href="#license">14. Licensing & data hygiene</a>
+<a href="#roadmap">15. Roadmap</a>
 </div></div>
 
 <h2 id=bg>1. Background — what is UAAP and why build this?</h2>
@@ -125,7 +126,7 @@ Reward 0.253. <span class=mut>(The benchmark answer keys are exact; the LLM fuse
 <table>
 <tr><th>Knob</th><th>Benchmark (200)</th><th>Large-scale target</th></tr>
 <tr><td>Count</td><td>200</td><td><b>1M → 10M+</b> soundscapes</td></tr>
-<tr><td>Languages</td><td>6</td><td><b>~50</b> — the full VibeVoice-ASR set (see §5)</td></tr>
+<tr><td>Languages</td><td>6</td><td><b>~50</b> — the full VibeVoice-ASR set (see §6)</td></tr>
 <tr><td>Duration</td><td>10–60 s</td><td><b>5–60 s</b></td></tr>
 <tr><td>Speech emotion diversity</td><td>low (read speech)</td><td><b>high</b> — 40–50% from emotional corpora</td></tr>
 <tr><td>Overlapping speech</td><td>25%</td><td><b>20–25%</b>, only between <i>different</i> identities</td></tr>
@@ -135,7 +136,151 @@ Reward 0.253. <span class=mut>(The benchmark answer keys are exact; the LLM fuse
 <tr><td>Captions</td><td>BUD-E only</td><td><b>reuse source metadata</b>; whisper+Gemma only when missing</td></tr>
 </table>
 
-<h2 id=sources>4. Data sources — fields, licensing, how to stream</h2>
+<h2 id=diversity>4. Diversity &amp; recipe sampling — guaranteeing varied soundscapes</h2>
+<p class=big>A dataset is only as useful as its <b>variety</b>. If every clip is "two people talking over a
+music bed for 30&nbsp;s", the model overfits that shape. So a soundscape is <b>not</b> built from fixed
+defaults — every clip first draws a <b>recipe</b> by sampling each diversity dimension from an
+<b>explicit categorical distribution</b>. The dimensions are (mostly) independent, so their product
+spans the whole space; a few dependency rules (below) keep the result physically sensible.</p>
+<div class=note g>The five dimensions, each sampled per clip: <b>(A)</b> content-mix archetype
+(speech : music : sfx ratio), <b>(B)</b> duration band, <b>(C)</b> temporal density / silence,
+<b>(D)</b> overlap mode, <b>(E)</b> speaker configuration (incl. same-speaker-multilingual via voice
+conversion). Each table below sums to 100% <i>within its dimension</i>; tune the weights to taste.</div>
+
+<h3>4.A — Content-mix archetype (the speech : music : sfx ratio) — PRIMARY axis</h3>
+<p>Sometimes all three types should be ~equal; sometimes only one type is present; sometimes one type
+dominates with the others as light accents. The archetype decides this. The S/M/F columns are the
+<b>target share of "active content"</b> (by active seconds &amp; event count) — realized as a budget the
+sampler fills.</p>
+<table>
+<tr><th>Archetype</th><th>weight</th><th>speech</th><th>music</th><th>sfx</th><th>character</th></tr>
+<tr><td><b>Balanced trio</b></td><td>14%</td><td>~34%</td><td>~33%</td><td>~33%</td><td>all three roughly equal — busy scene</td></tr>
+<tr><td><b>Speech-dominant</b></td><td>16%</td><td>70%</td><td>15%</td><td>15%</td><td>dialogue/narration, light bg</td></tr>
+<tr><td><b>Music-dominant</b></td><td>11%</td><td>12%</td><td>76%</td><td>12%</td><td>song bed, occasional speech/sfx</td></tr>
+<tr><td><b>SFX / ambience-dominant</b></td><td>11%</td><td>12%</td><td>12%</td><td>76%</td><td>foley/ambience scene, sparse speech</td></tr>
+<tr><td><b>Speech-only</b></td><td>13%</td><td>100%</td><td>—</td><td>—</td><td>pure ASR (mono- or multi-lingual)</td></tr>
+<tr><td><b>Music-only</b></td><td>6%</td><td>—</td><td>100%</td><td>—</td><td>pure music-captioning clip</td></tr>
+<tr><td><b>SFX-only</b></td><td>8%</td><td>—</td><td>—</td><td>100%</td><td>pure sound-event scene</td></tr>
+<tr><td><b>Speech + music</b></td><td>8%</td><td>55%</td><td>45%</td><td>—</td><td>song + talk, no sfx</td></tr>
+<tr><td><b>Speech + sfx</b></td><td>9%</td><td>55%</td><td>—</td><td>45%</td><td>scene dialogue + foley, no music</td></tr>
+<tr><td><b>Music + sfx</b></td><td>4%</td><td>—</td><td>50%</td><td>50%</td><td>scored ambience, no speech</td></tr>
+</table>
+<p class=mut>Weights sum to 100%. ~<b>82% of clips contain some speech</b> (everything except music-only,
+sfx-only, music+sfx); the other ~18% are non-speech sound/music scenes — important so the model also
+learns pure audio captioning, not only speech.</p>
+
+<h3>4.B–4.E — The orthogonal dimensions (sampled after the archetype)</h3>
+<div style="display:flex;gap:18px;flex-wrap:wrap">
+<div style="flex:1;min-width:300px">
+<h4>4.B Duration band (shorter ↔ longer)</h4>
+<table>
+<tr><th>Band</th><th>range</th><th>weight</th></tr>
+<tr><td>Micro</td><td>5–10 s</td><td>18%</td></tr>
+<tr><td>Short</td><td>10–20 s</td><td>32%</td></tr>
+<tr><td>Medium</td><td>20–40 s</td><td>32%</td></tr>
+<tr><td>Long</td><td>40–60 s</td><td>18%</td></tr>
+</table>
+<h4>4.C Temporal density / silence</h4>
+<table>
+<tr><th>Mode</th><th>meaning</th><th>weight</th></tr>
+<tr><td>Dense</td><td>events back-to-back, ≤0.2 s gaps</td><td>30%</td></tr>
+<tr><td>Spaced</td><td><b>silence gaps</b> 0.5–4 s between events</td><td>40%</td></tr>
+<tr><td>Continuous bed</td><td>a bg spans the whole clip; fg events float over it</td><td>30%</td></tr>
+</table>
+</div>
+<div style="flex:1;min-width:300px">
+<h4>4.D Overlap mode (only when ≥2 overlappable events)</h4>
+<table>
+<tr><th>Mode</th><th>meaning</th><th>weight</th></tr>
+<tr><td>None</td><td>everything sequential</td><td>50%</td></tr>
+<tr><td>Light</td><td>1 overlap region</td><td>33%</td></tr>
+<tr><td>Heavy</td><td>2+ concurrent events</td><td>17%</td></tr>
+</table>
+<h4>4.E Speaker config (only when speech present)</h4>
+<table>
+<tr><th>Config</th><th>meaning</th><th>weight*</th></tr>
+<tr><td>Single</td><td>one speaker, one language</td><td>30%</td></tr>
+<tr><td>Multi-distinct</td><td>2–4 different speakers</td><td>38%</td></tr>
+<tr><td><b>Same-spk multilingual</b></td><td>one identity, ≥2 languages (<b>Chatterbox VC</b>)</td><td>17%</td></tr>
+<tr><td>Multilingual-distinct</td><td>different speakers, different languages</td><td>15%</td></tr>
+</table>
+<p class=mut>*of the ~82% speech-bearing clips → same-speaker-multilingual ≈ <b>14% of all clips</b>.</p>
+</div>
+</div>
+
+<h3>4.F — Dependency rules (keep the physics sensible)</h3>
+<ul>
+<li><b>Speech-on-speech overlap requires DIFFERENT identities.</b> A person cannot talk over themselves —
+so overlap mode for speech only fires when speaker config is multi-distinct or multilingual-distinct.</li>
+<li><b>Same-speaker-multilingual ⇒ turns are SEQUENTIAL</b> (overlap forced to <i>none</i> among those
+turns). Realized with <b>Chatterbox voice conversion</b>: pick a same-gender second-language utterance
+and convert it to the first turn's identity (§8), so one person "speaks" English then Dutch, never at
+the same time. This is the single most valuable cross-lingual signal in the set.</li>
+<li><b>SFX and music may overlap anything freely</b> (music bed under speech, an SFX stab during music,
+ambience under dialogue) — overlap mode there controls how many concurrent non-speech layers.</li>
+<li><b>Music-only / SFX-only ⇒ no speaker config, no speech overlap;</b> overlap mode instead layers the
+sound/music events. <b>Speech-only ⇒ no bg layer</b>, so "continuous bed" degrades to dense/spaced.</li>
+<li><b>Background mode follows the archetype:</b> music bed when music is present &amp; continuous;
+ambient-SFX bed when sfx-dominant &amp; continuous; otherwise silence — and "spaced" density injects
+explicit <b>silence gaps</b> the answer key must cover as quiet room-tone.</li>
+</ul>
+
+<h3>4.G — The recipe sampler (one call per clip, pure CPU)</h3>
+<pre><code>ARCHETYPES = [  # (name, weight, speech%, music%, sfx%)
+  ("balanced",14,.34,.33,.33), ("speech_dom",16,.70,.15,.15),
+  ("music_dom",11,.12,.76,.12), ("sfx_dom",11,.12,.12,.76),
+  ("speech_only",13,1,0,0), ("music_only",6,0,1,0), ("sfx_only",8,0,0,1),
+  ("speech_music",8,.55,.45,0), ("speech_sfx",9,.55,0,.45), ("music_sfx",4,0,.5,.5)]
+DUR   = [(("micro",5,10),18),(("short",10,20),32),(("medium",20,40),32),(("long",40,60),18)]
+DENS  = [("dense",30),("spaced",40),("bed",30)]
+OVL   = [("none",50),("light",33),("heavy",17)]
+SPK   = [("single",30),("multi",38),("same_multiling",17),("multiling",15)]
+
+def sample_recipe(rng):
+    arch  = wpick(rng, ARCHETYPES)                       # A: speech:music:sfx ratio
+    (band, lo, hi), _ = wpick(rng, DUR);  dur = rng.uniform(lo, hi)   # B
+    dens  = wpick(rng, DENS)                              # C
+    has_speech = arch[2] > 0
+    spk   = wpick(rng, SPK) if has_speech else None       # E
+    # D: overlap only meaningful with >=2 overlappable events; speech overlap needs distinct ids
+    can_speech_overlap = spk in ("multi","multiling")
+    ovl   = wpick(rng, OVL) if (can_speech_overlap or arch_has_layers(arch)) else "none"
+    if spk == "same_multiling":  ovl = "none"             # F: no self-overlap; turns sequential (VC)
+    if has_speech and arch[1]==1 and dens=="bed": dens = rng.choice(["dense","spaced"])  # speech-only: no bed
+    return dict(archetype=arch[0], ratio=arch[1:4], duration=round(dur,2),
+                density=dens, overlap=ovl, speakers=spk, vc=(spk=="same_multiling"))
+# the mixer (§9) then allocates each type's active-time budget per `ratio`, places events per
+# `density`/`overlap`, assigns identities per `speakers`, and (if vc) routes turns through Chatterbox.</code></pre>
+
+<h3>4.H — Worked mixture table (representative end-to-end variants)</h3>
+<p>The four tables above are the authoritative spec; their <b>independent product</b> is the full space.
+Below are representative <b>named</b> variants with their composition and an <b>≈ dataset share</b>
+(= product of the driving dimensions). These are illustrative cells, not an exhaustive partition — the
+real set is the full cross-product, so they don't sum to 100%.</p>
+<table>
+<tr><th>Variant</th><th>S / M / F</th><th>driving dimensions</th><th>≈ share</th></tr>
+<tr><td>Pure mono ASR — 1 speaker, 1 language, sequential, no bg</td><td>100/0/0</td><td>speech-only × single</td><td>~3.9%</td></tr>
+<tr><td>Multilingual ASR — distinct speakers, sequential</td><td>100/0/0</td><td>speech-only × multilingual-distinct</td><td>~2.0%</td></tr>
+<tr><td><b>Same speaker, 2 languages (Chatterbox VC)</b> — sequential</td><td>100/0/0</td><td>speech-bearing × same-spk-multilingual</td><td>~14% (all archetypes)</td></tr>
+<tr><td>Bilingual dialogue, <b>overlapping</b>, quiet music bed</td><td>60/30/10</td><td>speech-dominant × (multi/multiling) × overlap</td><td>~4.2%</td></tr>
+<tr><td>Dialogue over ambient SFX, <b>spaced</b> (silence gaps)</td><td>55/0/45</td><td>speech+sfx × multi × no-overlap × spaced</td><td>~1.7%</td></tr>
+<tr><td>Balanced trio, dense, overlapping</td><td>34/33/33</td><td>balanced × overlap</td><td>~7.0%</td></tr>
+<tr><td>Podcast — single speaker + quiet music bed, spaced</td><td>70/30/0</td><td>speech+music × single × bed</td><td>~2.4%</td></tr>
+<tr><td><b>Loud music, sudden speech/SFX intrusion</b></td><td>15/70/15</td><td>music-dominant × heavy-overlap</td><td>~1.9%</td></tr>
+<tr><td>Music-only, long song-form</td><td>0/100/0</td><td>music-only × long</td><td>~1.1%</td></tr>
+<tr><td>SFX ambience scene, no speech</td><td>0/0/100</td><td>sfx-only (any duration)</td><td>~8.0%</td></tr>
+<tr><td>Scored ambience — music + foley, no speech</td><td>0/50/50</td><td>music+sfx × layered-overlap</td><td>~4.0%</td></tr>
+<tr><td>Micro clip — one short utterance (5–10 s)</td><td>100/0/0</td><td>speech-only × micro × single</td><td>~0.7%</td></tr>
+<tr><td>Crowd scene — heavy overlapping multilingual speech + SFX</td><td>50/0/50</td><td>balanced/speech-dom × multilingual × heavy-overlap</td><td>~1.5%</td></tr>
+<tr><td>Narration over evolving SFX bed, continuous</td><td>40/0/60</td><td>sfx-dominant × single × bed</td><td>~1.0%</td></tr>
+</table>
+<div class=note a>Tuning levers: raise the <b>same-spk-multilingual</b> weight to make more cross-lingual
+identity data; raise <b>overlap</b> to stress-test diarization; raise <b>music-only/sfx-only</b> to teach
+pure audio captioning; widen the <b>duration</b> tails for length robustness. Log every recipe (it's the
+deterministic seed of the clip), then audit the <i>realized</i> marginals against these target tables and
+nudge the weights until they match — that closes the loop on diversity.</div>
+
+<h2 id=sources>5. Data sources — fields, licensing, how to stream</h2>
 <p>All are HuggingFace <b>WebDataset</b> tars (except MLS, which is HF-native). <b>Critical gotcha:</b>
 in the LAION/audioset tars all metadata is under a top-level <code>json</code> key
 (<code>sample["json"][...]</code>), and the SFX caption key is <code>"Flash 2.5 Annotation"</code> for the
@@ -206,7 +351,7 @@ for audio, meta, key in ds:
     lang    = key.split("/")[0]                 # en
     # transcript: join cv_id back to the Common Voice TSV, or run VibeVoice-ASR at annotation time</code></pre>
 
-<h2 id=speech>5. Speech sampling strategy</h2>
+<h2 id=speech>6. Speech sampling strategy</h2>
 <p>Two requirements pull in different directions — <b>language balance</b> (don't let English dominate)
 vs. <b>emotion diversity</b> (the emotional corpora are English-heavy). We satisfy both with a 50/50 split
 <i>per speech slot</i>:</p>
@@ -226,7 +371,7 @@ fall back to the nearest available corpus per language.</p>
 no snippet is reused, and prefer distinct <code>speaker</code> ids within a clip. Filter to 2–14 s
 utterances with non-empty transcripts and decent quality (e.g. Emolia <code>dnsmos</code> &gt; 2.5).</p>
 
-<h2 id=captions>6. Captions / ground truth — reuse first, derive second</h2>
+<h2 id=captions>7. Captions / ground truth — reuse first, derive second</h2>
 <p>Each placed piece needs its UAAP fields. <b>Prefer the metadata that already ships with the source</b>
 (free, instant); only run the Whisper "expert" captioners + the Gemma merge when a field is missing.</p>
 <table>
@@ -245,7 +390,7 @@ fuser at Reward 0.253; <code>gemma-4-E4B</code>/4B is the lighter option at 0.24
 final caption. For the procedurally-built data, the source metadata is usually rich enough that the
 expensive captioners can be skipped on most clips.</div>
 
-<h2 id=vc>7. Cross-lingual same speaker — Chatterbox voice conversion</h2>
+<h2 id=vc>8. Cross-lingual same speaker — Chatterbox voice conversion</h2>
 <p>We want clips where <b>one identity speaks two languages</b> (e.g. an English then a Dutch turn) — a
 hard, realistic case. We can't get the same real person in two languages, so we synthesise identity with
 <b>Chatterbox VC</b> (<code>ResembleAI/chatterbox</code>, MIT): pick a <i>same-gender</i> second utterance
@@ -262,7 +407,7 @@ between DIFFERENT identities</b>. If a clip uses the same-speaker-two-languages 
 <b>sequential, never overlapping</b> (a person can't talk over themselves). Overlap ⇒ ≥2 distinct
 <code>speaker_id</code>s.</div>
 
-<h2 id=mix>8. The soundscape mixer — overlap, ducking, procedural loudness</h2>
+<h2 id=mix>9. The soundscape mixer — overlap, ducking, procedural loudness</h2>
 <p>A pure-CPU procedural step (no GPU). Extends <code>build_soundscapes.py</code>. Key additions vs. the
 benchmark: a full <b>overlap matrix</b>, <b>side-chain ducking</b> (lower background under speech),
 <b>music-with-foreground-intrusion</b>, and a <b>loudness ladder</b> derived from the actual mix gain.</p>
@@ -329,7 +474,7 @@ or SFX event on top). Each placement writes its own ground-truth event with its 
 the speech-centric model (matches the encoders). Everything above is deterministic given the worker's RNG
 seed → reproducible clips.</p>
 
-<h2 id=format>9. Output format — UAAP-compatible, plus component files</h2>
+<h2 id=format>10. Output format — UAAP-compatible, plus component files</h2>
 <p>Each generated clip emits <b>three things</b> so the heavy GPU annotation can be deferred and so the
 data is debuggable:</p>
 <ol>
@@ -350,7 +495,7 @@ clip_000123_components/
    sfx0.mp3     sfx0.json
    music.mp3    music.json</code></pre>
 
-<h2 id=scale>10. Scaling to millions — the two-stage decentralized architecture</h2>
+<h2 id=scale>11. Scaling to millions — the two-stage decentralized architecture</h2>
 <p class=big>The recommended design splits the work along the hardware you actually have: <b>one big
 storage/CPU server</b> that owns every source dataset and does all sampling + packaging, and a
 <b>decentralized fleet of GPU servers</b> that fetch the packaged work and do the neural captioning +
@@ -392,11 +537,11 @@ they spend 100% of their time on the captioners + Gemma + mixdown. Captioning th
 audio (not the mix) gives cleaner captions, and keeping the raw components in each row lets the GPU side
 re-mix, audit, or train the model on the separated sources later.</div>
 
-<h3 id=stage1>10.1 — Stage 1, in detail (CPU storage server, per worker)</h3>
+<h3 id=stage1>11.1 — Stage 1, in detail (CPU storage server, per worker)</h3>
 <table>
 <tr><th>Step</th><th>What the CPU does</th><th>Cost</th></tr>
 <tr><td><b>a. roll recipe</b></td><td>Sample duration (5–60 s), #speech turns, the <b>50/50 balanced-vs-emotional</b>
-track (§5), overlap decision (20–25%, <i>different identities only</i>), background type (music bed 55% /
+track (§6), overlap decision (20–25%, <i>different identities only</i>), background type (music bed 55% /
 ambient-SFX 20% / silence 25%), #foreground SFX, #music intrusions. Pure RNG + counter bookkeeping.</td><td>µs</td></tr>
 <tr><td><b>b. draw pieces</b></td><td>Pull concrete clips from the <b>local</b> source tars/parquet for the
 chosen languages/types. Maintain a <b>per-language &amp; per-type counter</b> (global balance) and a
@@ -404,13 +549,13 @@ chosen languages/types. Maintain a <b>per-language &amp; per-type counter</b> (g
 <tr><td><b>c. decode + resample</b></td><td>ffmpeg/soundfile decode each chosen component → mono, resample to
 16 kHz (24 kHz if you want crisper SFX/music), trim silence. Keep the <b>RAW</b> component (do NOT mix).</td><td>~10–40 ms/file</td></tr>
 <tr><td><b>d. mix plan</b></td><td>Compute the exact placement: each event's <code>start_time</code>/
-<code>end_time</code>, target <code>loudness</code> label + its RMS <b>gain</b> (the loudness ladder, §8),
+<code>end_time</code>, target <code>loudness</code> label + its RMS <b>gain</b> (the loudness ladder, §9),
 side-chain <b>duck spans</b>, <code>speaker_id</code> assignment, overlap flags, and a <code>vc_needed</code>
 flag for cross-lingual same-speaker turns. This is the <b>ground-truth skeleton</b> — written, not predicted.</td><td>µs</td></tr>
 <tr><td><b>e. gather metadata</b></td><td>Copy each component's full source JSON (caption/timbre/voice-tagging/
 emotion_annotation/transcript/speaker/lang/license…) so the GPU side never needs the source datasets.</td><td>—</td></tr>
 <tr><td><b>f. write row</b></td><td>One WebDataset sample (one soundscape): the <code>recipe.json</code> plus
-every component as <code>&lt;role&gt;.flac</code> + <code>&lt;role&gt;.json</code> (see §10.3). FLAC keeps the
+every component as <code>&lt;role&gt;.flac</code> + <code>&lt;role&gt;.json</code> (see §11.3). FLAC keeps the
 raw audio lossless and small.</td><td>I/O</td></tr>
 <tr><td><b>g. shard + push</b></td><td>Accumulate <b>1000 rows → one .tar</b>; upload to the HF
 <code>raw-soundscapes</code> dataset repo with a content-hash shard name; append to a global
@@ -436,7 +581,7 @@ sink.close()                                                # then: huggingface_
 a tar write; the upload is amortized. 24 cores comfortably produce <b>thousands of packaged soundscapes per
 hour</b>, bounded mainly by HF upload bandwidth — so one storage server keeps a sizeable GPU fleet fed.</div>
 
-<h3 id=stage2>10.2 — Stage 2, in detail (decentralized GPU servers, per shard)</h3>
+<h3 id=stage2>11.2 — Stage 2, in detail (decentralized GPU servers, per shard)</h3>
 <p>Each GPU server claims <b>disjoint</b> shards with no coordinator — e.g. <code>shard_id % N == my_id</code>,
 or atomically rename a <code>&lt;shard&gt;.lease</code> file; skip any shard whose annotated output already
 exists (idempotent, crash-safe). Within a shard it runs three sub-steps, pipelined so the GPU never idles:</p>
@@ -454,7 +599,7 @@ overlap, loudness from Stage 1) + the captions/metadata and writes the final UAA
 polished <code>emotion</code>/<code>speaking_style</code> strings, dedicated <code>music</code> type, etc.
 <b>It must NOT alter the Stage-1 timings/speakers</b> (those are ground truth); it only writes descriptions.
 This is the bottleneck (~tens of GPU-seconds per soundscape).</td></tr>
-<tr><td><b>3. render mixdown</b></td><td><span class=tag ok>CPU</span></td><td>Execute the §8 mixer on the GPU
+<tr><td><b>3. render mixdown</b></td><td><span class=tag ok>CPU</span></td><td>Execute the §9 mixer on the GPU
 box's CPU: place each raw component at its recipe <code>start_time</code>, apply the <b>loudness gains</b> and
 <b>side-chain ducking</b>, sum, peak-limit, export <b>16 kHz mono MP3</b>. Runs concurrently with the GPU
 steps via a queue, so it's effectively free. (Cross-lingual same-speaker turns get Chatterbox VC here if the
@@ -471,7 +616,7 @@ for shard in claim_my_shards(all_shards, my_id, N):        # decentralized, disj
         # 2) GPU: Gemma writes the final event descriptions on the FIXED Stage-1 timeline
         events = gemma_fuse(rec, meta, feats)              # gemma-4-12b-it-GGUF ; timings frozen
         # 3) CPU (concurrent): render the soundscape audio from the raw components per the recipe
-        mp3 = render_mixdown(comps, rec)                   # §8 mixer: place + duck + loudness + peak-limit
+        mp3 = render_mixdown(comps, rec)                   # §9 mixer: place + duck + loudness + peak-limit
         push_to_hf(rec["clip_id"], mp3, {"clip_id":rec["clip_id"], **rec["header"], "events":events})</code></pre>
 <div class=note a><b>GPU vs CPU balance on a Stage-2 box.</b> <b>GPU</b> = the Whisper captioners (4 small
 models, batched) + <b>Gemma-4-12B</b> (the dominant cost) + optional VibeVoice-ASR. <b>CPU</b> (run in
@@ -479,7 +624,7 @@ parallel) = tar I/O, FLAC decode, the mixdown render, MP3 encode, and HF upload.
 so the CPU has the next soundscape's audio rendered while the GPU is still fusing the current one — the
 ~30 GPU-seconds of Gemma hide all the CPU work behind them.</div>
 
-<h3 id=schema>10.3 — The Stage-1 → Stage-2 row schema (one soundscape = one WebDataset sample)</h3>
+<h3 id=schema>11.3 — The Stage-1 → Stage-2 row schema (one soundscape = one WebDataset sample)</h3>
 <pre><code>raw-soundscapes-000042.tar
   └─ soundscape_0041873                       # __key__
        recipe.json     # {clip_id, duration, num_speakers, languages,
@@ -495,15 +640,15 @@ loudness) computed on CPU; Stage 2 only fills/polishes the text <code>descriptio
 <code>speaking_style</code> fields and renders the audio. <code>needs_caption</code> per event tells Stage 2
 which components actually require a Whisper pass (most don't — the source metadata already has it).</p>
 
-<h3 id=annotate>11. Alternative — supercomputer / shared filesystem</h3>
+<h3 id=annotate>12. Alternative — supercomputer / shared filesystem</h3>
 <p>If instead you have one big machine with tens of TB of fast shared scratch, collapse the two stages onto
 it: a <b>CPU partition</b> runs Stage 1 writing rows to a shared directory (skip the HF upload), and a
 <b>GPU partition</b> runs Stage 2 reading the same directory in place. Same code, same row schema — just a
 local path instead of an HF repo, with <b>no upload/download churn</b>. Use this when one machine has both
-the storage and the GPUs; use the two-stage HF design (§10) when storage and GPUs live on separate boxes —
+the storage and the GPUs; use the two-stage HF design (§11) when storage and GPUs live on separate boxes —
 which is the case here (24-core storage server feeding a separate GPU fleet).</p>
 
-<h2 id=model>12. Downstream — the single-pass model we are training toward</h2>
+<h2 id=model>13. Downstream — the single-pass model we are training toward</h2>
 <p>The whole point of the dataset: <b>train one model to emit the entire UAAP JSON in a single pass</b>,
 so we can retire the ensemble. Two training stages:</p>
 <ol>
@@ -538,7 +683,7 @@ concatenate/stitch the event lists (re-using speaker ids across windows).</li>
 emotional speech, procedural loudness) is precisely what a single model needs to learn perception the base
 ASR never had.</p>
 
-<h2 id=license>13. Licensing & data hygiene</h2>
+<h2 id=license>14. Licensing & data hygiene</h2>
 <table>
 <tr><th>Source</th><th>Commercial?</th><th>Action</th></tr>
 <tr><td>majestrino <i>common-voice</i> tars</td><td><span class=tag ok>CC0 (CV-derived)*</span></td><td>confirm LAION packaging terms</td></tr>
@@ -555,10 +700,10 @@ ASR never had.</p>
 bursts), music captions from the Apache set, and speech from CV/Emolia/MLS — excluding AudioSet and
 Tango-Flux. Keep a separate research build that includes everything for maximum diversity.</div>
 
-<h2 id=roadmap>14. Roadmap</h2>
+<h2 id=roadmap>15. Roadmap</h2>
 <ol>
 <li><b>Week 1 — adapters &amp; smoke test.</b> Write per-source streaming readers (return a common
-<code>Piece(audio, lang, speaker, transcript, raw_caption, fields)</code>); reproduce the §8 mixer on one
+<code>Piece(audio, lang, speaker, transcript, raw_caption, fields)</code>); reproduce the §9 mixer on one
 CPU box; generate 1k clips; eyeball the answer keys with an inspector HTML.</li>
 <li><b>Week 2 — captioning &amp; VC.</b> Wire the 4 Whisper captioners + Gemma-4-12B merge for
 <code>needs_caption</code> events; integrate Chatterbox VC for cross-lingual same-speaker; validate
