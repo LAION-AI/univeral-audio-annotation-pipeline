@@ -56,7 +56,7 @@ diarization-conditioned Whisper — transcribes <b>each speaker separately</b> t
 recovering simultaneous voices the single-pass ASR garbles.</li>
 <li><b>Whisper experts</b> tag each utterance with raw emotion / timbre / speaking-style.</li>
 <li><b>SFX LoRA</b> (MOSS-Audio-8B-Instruct + laion/moss-audio-sfx-lora-v4) proposes timestamped sound
-events; a <b>vocal-burst pre-pass</b> (laion/vocalburst-locator @ 0.7 + laion/sound-effect-captioning-whisper)
+events; a <b>vocal-burst pre-pass</b> (laion/vocalburst-locator @ 0.88 + laion/vocalburst-captioning-whisper)
 proposes extra candidate sound effects.</li>
 <li><b>Gemma-4-12B</b> performs a <b>text-only fusion</b>: it reads <i>only</i> the experts' text outputs
 (no audio) and writes the final structured annotation &mdash; Nemotron words on the VibeVoice timeline,
@@ -158,7 +158,7 @@ def main():
                 f'<div class="asr"><span class="t">{e.get("start","?")}&ndash;{e.get("end","?")}s</span> '
                 f'<b>conf {e.get("confidence","?")}</b> &mdash; {esc(e.get("caption",""))}</div>'
                 for e in sorted(vb_events, key=lambda x: float(x.get("start", 0) or 0)))
-            vb = (f"<details><summary>Vocal-burst candidates (specialist locator, threshold 0.7) "
+            vb = (f"<details><summary>Vocal-burst candidates (specialist locator, threshold 0.88) "
                   f"+ captions ({len(vb_events)})</summary>{vitems}</details>")
         cards.append(f'<div class="card"><div class="clip-h"><h3>{esc(it["stem"])}</h3></div>'
                      f'<audio controls preload="none" src="{b64_audio(it["audio"])}"></audio>'

@@ -26,7 +26,7 @@ score **4.13/5.00**) and additionally enables the SFX LoRA stage.
 | SFX | MOSS-Audio-8B-Instruct | [OpenMOSS-Team/MOSS-Audio-8B-Instruct](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-8B-Instruct) | 18 GB | ~18 GB |
 | SFX | SFX LoRA adapter ⚠️ gated | [laion/moss-audio-sfx-lora-v4](https://huggingface.co/laion/moss-audio-sfx-lora-v4) | 0.7 GB | (merged into base) |
 | VB | Vocal-burst locator | [laion/vocalburst-locator](https://huggingface.co/laion/vocalburst-locator) | 1.0 GB | ~1 GB |
-| VB | Sound-effect captioner | [laion/sound-effect-captioning-whisper](https://huggingface.co/laion/sound-effect-captioning-whisper) | 1.0 GB | ~1 GB |
+| VB | Vocal-burst captioner | [laion/vocalburst-captioning-whisper](https://huggingface.co/laion/vocalburst-captioning-whisper) | 1.0 GB | ~1 GB |
 | Final | MOSS-Audio-8B-Thinking | [OpenMOSS-Team/MOSS-Audio-8B-Thinking](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-8B-Thinking) | 18 GB | ~18 GB |
 | Source | MOSS-Audio code (`src.*`) | [github.com/OpenMOSS/MOSS-Audio](https://github.com/OpenMOSS/MOSS-Audio) | — | — |
 
@@ -121,7 +121,7 @@ The MOSS annotator prompt (`pipeline/moss_annotator.py`) was tuned for this conf
    sanitized to NON-SPEECH only** — any clause describing a speaker or what was said is stripped — so a
    fallback can never invent a speaker or speech; speaker identity and spoken content come solely from
    the ASR models, the Whisper experts and MOSS.
-7. **Vocal-burst candidates.** A specialist pre-pass (the vocal-burst locator at threshold 0.7,
+7. **Vocal-burst candidates.** A specialist pre-pass (the vocal-burst locator at threshold 0.88,
    with >30 s clips windowed and merged, plus the sound-effect captioner) proposes extra
    timestamped sound effects. They are handed to MOSS **as candidates to verify** — MOSS keeps
    one only if it can actually hear it (they may be false positives), and is *not* told they are

@@ -61,7 +61,7 @@ the experts' outputs (not the audio):
   │ Whisper experts (x3) │  │ Specialist sound-event prepass│
   │ emotion · timbre ·   │  │ • SFX LoRA (MOSS-8B-Instruct  │
   │ speaking-style        │  │   + laion sfx-lora r=128)     │
-  │ (per utterance)      │  │ • Vocal-burst locator @0.7    │
+  │ (per utterance)      │  │ • Vocal-burst locator @0.88   │
   └──────────┬───────────┘  └───────────────┬──────────────┘
              └───────────────┬──────────────┘
                              ▼
@@ -199,7 +199,7 @@ Use `--fusion moss` for the audio MOSS-Audio-8B annotator (higher precision). Se
 | **Gemma fuser** | `unsloth/gemma-4-12b-it-GGUF` (Q8, llama.cpp) | ~14 GB | TEXT-only final fusion (default) |
 | Whisper experts (x3) | `laion/BUD-E-Whisper`, `laion/timbre-whisper`, `laion/voice-tagging-whisper` | ~2 GB | emotion/timbre/style |
 | SFX LoRA | `OpenMOSS-Team/MOSS-Audio-8B-Instruct` + `laion/moss-audio-sfx-lora-v4` (gated) | ~18 GB | sound events |
-| Vocal-burst locator + captioner | `laion/vocalburst-locator`, `laion/sound-effect-captioning-whisper` | ~2 GB | vocal bursts |
+| Vocal-burst locator + captioner | `laion/vocalburst-locator` (@0.88) + `laion/vocalburst-captioning-whisper` | ~2 GB | vocal bursts |
 | Parakeet / Qwen3 | `nvidia/parakeet-tdt-0.6b-v3`, `Qwen/Qwen3-ASR-1.7B` (+aligner) | ~12 GB | legacy ensemble only |
 | MOSS Annotator | `OpenMOSS-Team/MOSS-Audio-8B-Thinking` | ~18 GB | legacy final stage (`--fusion moss`) |
 
@@ -246,6 +246,38 @@ at once).
 
 📊 **Interactive comparison:** [soundscape_comparison.html](https://laion-ai.github.io/univeral-audio-annotation-pipeline/soundscape_comparison.html)
 · 🎧 **20-sample audio demo (predictions vs ground truth):** [gemma12_dicow_demo.html](https://laion-ai.github.io/univeral-audio-annotation-pipeline/gemma12_dicow_demo.html)
+
+### Vocal-burst detection threshold (how we chose 0.88)
+
+The vocal-burst pre-pass is a two-model **ensemble**: the detector
+[`laion/vocalburst-locator`](https://huggingface.co/laion/vocalburst-locator) finds *where* bursts occur,
+and the captioner [`laion/vocalburst-captioning-whisper`](https://huggingface.co/laion/vocalburst-captioning-whisper)
+(a Whisper-small fine-tune of `laion/sound-effect-captioning-whisper` on
+[`laion/improved_synthetic_vocal_burts`](https://huggingface.co/datasets/laion/improved_synthetic_vocal_burts);
+val clap_sim 0.251 vs 0.190 untuned) describes *what* each one is.
+
+To pick the detector's confidence threshold we swept **0.85 → 0.92 (1% steps)** over **150 audio clips**
+(`merge_gap=0.3 s`, `min_dur=0.5 s`). For every (clip × threshold) the detected segments were captioned,
+and the **audio + (start, end, caption)** list was sent to **Gemini 3.1 Pro**, which rated three axes 0–5
+(5 = perfect): **caption quality**, **timestamp accuracy**, and **completeness** (cover ALL real bursts,
+penalizing misses and false positives) — **1,200 independent judgments**. *overall* = mean of the three.
+
+| rank | threshold | overall | completeness | caption quality | timestamp accuracy |
+|------|-----------|---------|--------------|-----------------|--------------------|
+| 🥇 | **0.88** | **3.475** | 3.11 | 3.24 | 4.07 |
+| 🥈 | 0.89 | 3.469 | 3.15 | 3.18 | 4.08 |
+| 🥉 | 0.85 | 3.466 | 3.11 | 3.22 | 4.07 |
+| 4 | 0.90 | 3.445 | 3.10 | 3.24 | 4.00 |
+| 5 | 0.86 | 3.411 | 3.05 | 3.14 | 4.04 |
+| 6 | 0.87 | 3.390 | 3.07 | 3.10 | 4.00 |
+| 7 | 0.91 | 3.364 | 3.05 | 3.14 | 3.91 |
+| 8 | 0.92 | 3.363 | 3.02 | 3.15 | 3.92 |
+
+Scores cluster tightly across the band; **threshold 0.88 is the best overall** and is now the pipeline
+default (`UAAP_VB_THRESHOLD`, `VocalBurstLocator.detect(threshold=0.88)`). Timestamp accuracy is
+consistently strong (~4.0); completeness is the weakest axis and drops at 0.91–0.92 as real bursts get
+missed. Full interactive report (audio + predictions + per-clip Gemini scores for the top-3 thresholds):
+[on the locator model card](https://huggingface.co/laion/vocalburst-locator/resolve/main/vocalburst_threshold_report.html).
 
 ### Legacy LLM-judged eval (60 scenes, Gemini 3.1 Pro, 0–5 scale)
 
@@ -332,7 +364,7 @@ examples/
 **Sound events**
 - SFX LoRA: [laion/moss-audio-sfx-lora-v4](https://huggingface.co/laion/moss-audio-sfx-lora-v4) (gated) on [OpenMOSS-Team/MOSS-Audio-8B-Instruct](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-8B-Instruct)
 - Vocal-burst locator: [laion/vocalburst-locator](https://huggingface.co/laion/vocalburst-locator)
-- Sound-effect captioner: [laion/sound-effect-captioning-whisper](https://huggingface.co/laion/sound-effect-captioning-whisper)
+- Vocal-burst captioner: [laion/vocalburst-captioning-whisper](https://huggingface.co/laion/vocalburst-captioning-whisper) (fine-tune of [laion/sound-effect-captioning-whisper](https://huggingface.co/laion/sound-effect-captioning-whisper))
 
 **Annotator & MOSS-Audio**
 - [OpenMOSS-Team/MOSS-Audio-8B-Thinking](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-8B-Thinking) · source code: [github.com/OpenMOSS/MOSS-Audio](https://github.com/OpenMOSS/MOSS-Audio)

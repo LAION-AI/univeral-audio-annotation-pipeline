@@ -11,7 +11,7 @@ sound events into the MOSS annotator:
      smoothed (to erase 1-2 frame outliers), thresholded, and grouped into events with
      small-gap merging and a minimum-duration filter.
 
-  2. ``laion/sound-effect-captioning-whisper`` — a Whisper captioner. Each detected
+  2. ``laion/vocalburst-captioning-whisper`` — the fine-tuned vocal-burst captioner. Each detected
      candidate is cut out and the batch is captioned in one call.
 
 The output is a list of ``{start, end, confidence, caption}`` candidates. These are
@@ -31,7 +31,7 @@ SAMPLE_RATE = 16000
 WINDOW_SECONDS = 30.0
 FPS = 50                       # 1500 frames / 30 s
 LOCATOR_REPO = "laion/vocalburst-locator"
-CAPTIONER_REPO = "laion/sound-effect-captioning-whisper"
+CAPTIONER_REPO = "laion/vocalburst-captioning-whisper"   # fine-tuned vocal-burst captioner (ensemble partner)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -118,14 +118,14 @@ class VocalBurstLocator:
         print("Vocal-burst locator loaded.")
 
     @torch.no_grad()
-    def detect(self, wav: np.ndarray, threshold: float = 0.7,
+    def detect(self, wav: np.ndarray, threshold: float = 0.88,
                merge_gap: float = 0.3, min_dur: float = 0.5,
                smooth_frames: int = 5) -> List[Dict]:
         """Return candidate events as [{start, end, confidence, duration}].
 
         Args:
             wav: mono 16 kHz float32 audio of the FULL clip (any length).
-            threshold: confidence cutoff (user default 0.7).
+            threshold: confidence cutoff (default 0.88 — best on the Gemini-judged sweep, see README).
         """
         win = int(WINDOW_SECONDS * SAMPLE_RATE)
         total = len(wav)
@@ -163,23 +163,25 @@ class VocalBurstLocator:
         torch.cuda.empty_cache()
 
 
-class SoundEffectCaptioner:
-    """Caption short audio segments with laion/sound-effect-captioning-whisper.
+class VocalBurstCaptioner:
+    """Caption detected vocal-burst segments with laion/vocalburst-captioning-whisper.
 
-    GPU VRAM: ~1 GB.
+    This is the fine-tuned vocal-burst captioner (a Whisper-small fine-tune of
+    laion/sound-effect-captioning-whisper, trained on laion/improved_synthetic_vocal_burts).
+    It is the ensemble partner of laion/vocalburst-locator: the locator finds *where* the
+    bursts are, this model describes *what* each one is. GPU VRAM: ~1 GB.
     """
 
     def __init__(self, device: str = "cuda:0"):
         from transformers import WhisperProcessor, WhisperForConditionalGeneration
         self.device = device
-        print(f"Loading sound-effect captioner on {device}...")
-        # The repo's tokenizer_config.json has a malformed `extra_special_tokens`
-        # field; the captioner is a fine-tuned whisper-small with the standard vocab,
-        # so build the processor from the base model instead.
+        print(f"Loading vocal-burst captioner ({CAPTIONER_REPO}) on {device}...")
+        # Processor from the base whisper-small (standard vocab) for robustness.
         self.processor = WhisperProcessor.from_pretrained("openai/whisper-small")
         self.model = WhisperForConditionalGeneration.from_pretrained(
             CAPTIONER_REPO).to(device).eval()
-        print("Sound-effect captioner loaded.")
+        self.model.generation_config.forced_decoder_ids = None
+        print("Vocal-burst captioner loaded.")
 
     @torch.no_grad()
     def caption(self, segments: List[np.ndarray], batch_size: int = 8) -> List[str]:
@@ -189,7 +191,7 @@ class SoundEffectCaptioner:
             batch = segments[i:i + batch_size]
             feats = self.processor(batch, sampling_rate=SAMPLE_RATE,
                                    return_tensors="pt").input_features.to(self.device)
-            ids = self.model.generate(feats, max_new_tokens=96)
+            ids = self.model.generate(feats, max_new_tokens=200)
             captions.extend(t.strip() for t in
                             self.processor.batch_decode(ids, skip_special_tokens=True))
         return captions
@@ -199,8 +201,12 @@ class SoundEffectCaptioner:
         torch.cuda.empty_cache()
 
 
+# Backward-compatible alias (this captioner used to be the sound-effect captioner).
+SoundEffectCaptioner = VocalBurstCaptioner
+
+
 def detect_and_caption(audio_path: str, device: str = "cuda:0",
-                       threshold: float = 0.7) -> List[Dict]:
+                       threshold: float = 0.88) -> List[Dict]:
     """Convenience: locate candidates in one clip and caption them.
 
     Returns [{start, end, confidence, caption}] sorted by start time.
@@ -219,7 +225,7 @@ def detect_and_caption(audio_path: str, device: str = "cuda:0",
 
     segments = [wav[int(c["start"] * SAMPLE_RATE):int(c["end"] * SAMPLE_RATE)]
                 for c in cands]
-    captioner = SoundEffectCaptioner(device=device)
+    captioner = VocalBurstCaptioner(device=device)
     caps = captioner.caption(segments)
     captioner.cleanup()
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Stage 3b — vocal-burst candidate pre-pass (run in the base ``venv``).
 
-Runs the vocal-burst LOCATOR (laion/vocalburst-locator, confidence threshold 0.7,
+Runs the vocal-burst LOCATOR (laion/vocalburst-locator, confidence threshold 0.88,
 >30 s audio split into <=30 s windows with cross-window merging and frame smoothing),
-then captions each detected candidate with laion/sound-effect-captioning-whisper
+then captions each detected candidate with laion/vocalburst-captioning-whisper
 (batched). Writes ``<workdir>/<stem>/vocalburst.json`` — a list of
 ``{start, end, confidence, caption}`` that stage 4 hands to MOSS as candidate sound
 effects to verify (MOSS keeps only the ones it can actually hear).
@@ -18,12 +18,12 @@ from _common import block_flash_attn, add_repo_to_path, get_workdir, load_index,
 block_flash_attn()
 add_repo_to_path()
 
-THRESHOLD = float(os.environ.get("UAAP_VB_THRESHOLD", "0.7"))
+THRESHOLD = float(os.environ.get("UAAP_VB_THRESHOLD", "0.88"))   # best on the Gemini-judged sweep
 
 
 def main():
     import librosa
-    from pipeline.vocalburst_locator import (VocalBurstLocator, SoundEffectCaptioner,
+    from pipeline.vocalburst_locator import (VocalBurstLocator, VocalBurstCaptioner,
                                              SAMPLE_RATE)
     workdir = get_workdir()
     index = load_index(workdir)
@@ -42,7 +42,7 @@ def main():
     locator.cleanup()
 
     # Stage 2: caption each candidate (model loaded once, batched).
-    captioner = SoundEffectCaptioner(device="cuda:0")
+    captioner = VocalBurstCaptioner(device="cuda:0")
     for it in index:
         c = cands[it["stem"]]
         out = []
